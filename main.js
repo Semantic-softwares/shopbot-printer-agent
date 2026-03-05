@@ -31,15 +31,16 @@ const printerStore = {
 let activeStoreId = null;
 
 // Configuration from .env
+const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+// Configuration from .env (dev) or sensible production defaults
 const config = {
-  apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:3000',
+  apiBaseUrl: process.env.API_BASE_URL || (isDev ? 'http://localhost:3000' : 'https://shopbot-server.herokuapp.com'),
   branchId: process.env.BRANCH_ID || 'default-branch',
   deviceId: process.env.DEVICE_ID || `printer-${Date.now()}`,
   pollInterval: parseInt(process.env.POLL_INTERVAL) || 3000,
   logLevel: process.env.LOG_LEVEL || 'INFO',
 };
-
-const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
 // Safe logger that handles broken pipes gracefully
 function safeLog(...args) {
