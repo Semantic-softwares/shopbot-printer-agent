@@ -26,12 +26,14 @@ export class AuthService {
 
   currentUser$ = this.currentUserSubject.asObservable();
 
+  /** Reactive signal — true when user is authenticated */
+  private _isLoggedIn = signal<boolean>(
+    !!this.sessionStorage.getCurrentUser() && !!this.sessionStorage.getAuthToken()
+  );
+  readonly isLoggedIn = this._isLoggedIn.asReadonly();
+
   get currentUserValue(): AuthUser | null {
     return this.currentUserSubject.value;
-  }
-
-  get isLoggedIn(): boolean {
-    return !!this.currentUserValue && !!this.sessionStorage.getAuthToken();
   }
 
   login(email: string, password: string): Observable<AuthUser> {
@@ -45,6 +47,7 @@ export class AuthService {
           this.sessionStorage.setCurrentUser(response.user);
           this.sessionStorage.setAuthToken(response.access_token);
           this.currentUserSubject.next(response.user);
+          this._isLoggedIn.set(true);
           return response.user;
         })
       );
@@ -55,5 +58,6 @@ export class AuthService {
     this.sessionStorage.removeAuthToken();
     this.sessionStorage.removeStore();
     this.currentUserSubject.next(null);
+    this._isLoggedIn.set(false);
   }
 }

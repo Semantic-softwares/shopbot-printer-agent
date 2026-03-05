@@ -26,7 +26,7 @@ export class App {
   sidebarOpen = signal(true);
   darkMode = signal(false);
 
-  isLoggedIn = computed(() => this.authService.isLoggedIn);
+  isLoggedIn = this.authService.isLoggedIn;
 
   storeName = computed(() => {
     const store = this.storeService.getStoreLocally();

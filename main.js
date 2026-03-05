@@ -803,8 +803,9 @@ async function discoverBluetoothPrinters() {
     try {
       noble = require('@abandonware/noble').default || require('@abandonware/noble');
     } catch (e) {
-      safeLog('⚠️ [BLUETOOTH] Noble library not available, showing mock devices');
-      return getMockBluetoothDevices();
+      safeLog('❌ [BLUETOOTH] Noble library not available — cannot scan for Bluetooth devices');
+      safeLog('❌ [BLUETOOTH] Error:', e.message);
+      return [];
     }
 
     safeLog('🔍 [BLUETOOTH DISCOVERY] Starting Noble BLE/Classic scan...');
@@ -886,46 +887,10 @@ async function discoverBluetoothPrinters() {
   }
 }
 
-// Mock Bluetooth devices for testing/development
-function getMockBluetoothDevices() {
-  safeLog('📋 [BLUETOOTH] Returning mock devices for development/testing');
-  return [
-    {
-      id: 'mock-1',
-      name: 'Kitchen Printer (XP-58)',
-      macAddress: '50:05:EB:40:C3:A0',
-      rssi: -45,
-      type: 'bluetooth',
-      isMock: true,
-    },
-    {
-      id: 'mock-2',
-      name: 'Receipt Printer Thermal',
-      macAddress: '00:1A:2B:3C:4D:5E',
-      rssi: -52,
-      type: 'bluetooth',
-      isMock: true,
-    },
-    {
-      id: 'mock-3',
-      name: 'POS Printer 80mm',
-      macAddress: 'AC:3F:A4:9C:27:B1',
-      rssi: -38,
-      type: 'bluetooth',
-      isMock: true,
-    },
-  ];
-}
-
 // Get RFCOMM channel for Bluetooth device (Noble uses GATT, default to channel 1 for SPP)
 async function getBluetoothDeviceChannel(macAddress) {
   try {
     safeLog(`🔍 [BLUETOOTH CHANNEL] Getting channel for ${macAddress}...`);
-    
-    // For mock devices
-    if (macAddress.includes('mock-')) {
-      return 1;
-    }
 
     let noble;
     try {
@@ -950,20 +915,6 @@ async function getBluetoothDeviceChannel(macAddress) {
 async function testBluetoothConnection(macAddress, channel = 1) {
   try {
     safeLog(`🔗 [BLUETOOTH TEST] Testing ${macAddress}:${channel}...`);
-
-    // For mock devices
-    if (macAddress.includes('mock-')) {
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          resolve({
-            success: true,
-            message: `✅ Connection test (mock) successful to ${macAddress}:${channel}`,
-            macAddress,
-            channel,
-          });
-        }, 1000);
-      });
-    }
 
     let noble;
     try {
@@ -2023,18 +1974,15 @@ function startExpressServer() {
     try {
       safeLog(`🔗 [BLUETOOTH PRINT] Using Noble to send to ${printer.name}...`);
 
-      // Handle mock printers
-      if (printer.macAddress.includes('mock-')) {
-        return attemptBluetoothPrintMock(job, printer);
-      }
-
       // Use unified Noble implementation
       let noble;
       try {
         noble = require('@abandonware/noble').default || require('@abandonware/noble');
       } catch (e) {
-        // Fallback to mock if noble not available
-        return attemptBluetoothPrintMock(job, printer);
+        job.status = 'failed';
+        job.error = 'Bluetooth library (Noble) not available';
+        safeLog('❌ [BLUETOOTH PRINT] Noble library not available — cannot print');
+        return;
       }
 
       attemptBluetoothPrintWithNoble(job, printer, noble);
@@ -2277,25 +2225,6 @@ function startExpressServer() {
         setTimeout(() => attemptBluetoothPrint(job, printer), 2000);
       }
     }
-  }
-
-  function attemptBluetoothPrintMock(job, printer) {
-    // Simulate successful printing for mock devices
-    safeLog(`📱 [BLUETOOTH PRINT MOCK] Simulating print to ${printer.name}...`);
-    
-    setTimeout(() => {
-      job.status = 'success';
-      job.completedAt = new Date().toISOString();
-
-      printerStore.printLogs.push({
-        ...job,
-        action: 'completed',
-        printer: printer.name,
-        timestamp: new Date().toISOString(),
-      });
-
-      safeLog(`✅ [BLUETOOTH PRINT MOCK] Successfully printed to ${printer.name} (${printer.macAddress})`);
-    }, 500);
   }
 
   expressApp.get('/api/logs', (req, res) => {
