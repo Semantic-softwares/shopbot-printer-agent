@@ -1,6 +1,6 @@
 {
   "name": "shopbot-printer",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "ShopBot Printer - Enterprise Print Management for ShopBot POS",
   "author": "ShopBot <info@shopbot.africa>",
   "main": "main.js",
@@ -120,8 +120,20 @@
     },
     "mac": {
       "target": [
-        "dmg",
-        "zip"
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "category": "public.app-category.business",
       "identity": null
