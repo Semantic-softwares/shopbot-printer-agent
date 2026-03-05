@@ -1,0 +1,160 @@
+<!-- Header -->
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h2 class="text-3xl font-bold text-gray-900 dark:text-white mb-1">📋 Print Jobs & Logs</h2>
+    <p class="text-gray-500 dark:text-slate-400 text-sm">Real-time print job monitoring and polling status</p>
+  </div>
+  <div class="flex gap-3">
+    <button (click)="refreshLogs()"
+            class="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors">
+      🔄 Refresh
+    </button>
+    <button (click)="clearAllLogs()"
+            class="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors">
+      🗑️ Clear All
+    </button>
+  </div>
+</div>
+
+<!-- Polling Status -->
+<div class="mb-6 bg-gradient-to-r from-indigo-500 to-blue-500 dark:from-blue-900 dark:to-blue-800 rounded-xl p-6 border border-indigo-400 dark:border-blue-700 shadow-sm">
+  <div class="flex items-center justify-between">
+    <div>
+      <h3 class="text-lg font-semibold text-white dark:text-blue-200 mb-2">📡 Polling Status</h3>
+      <p class="text-indigo-100 dark:text-blue-100 text-sm">
+        Backend: <span class="font-mono font-bold">{{ pollingStatus()?.apiBaseUrl || 'N/A' }}</span>
+      </p>
+      <p class="text-indigo-100 dark:text-blue-100 text-sm mt-1">
+        Store ID: <span class="font-mono font-bold">{{ pollingStatus()?.storeId || 'N/A' }}</span>
+      </p>
+      <p class="text-indigo-100 dark:text-blue-100 text-sm mt-1">
+        Device ID: <span class="font-mono font-bold">{{ pollingStatus()?.deviceId || 'N/A' }}</span>
+      </p>
+      <p class="text-indigo-100 dark:text-blue-100 text-sm mt-1">
+        Polling Interval: <span class="font-bold">{{ pollingStatus()?.pollInterval || 'N/A' }}ms</span>
+      </p>
+    </div>
+    <div class="text-right">
+      <div class="text-5xl font-bold" [class.text-green-300]="pollingStatus()?.pollingActive" [class.text-red-300]="!pollingStatus()?.pollingActive">
+        {{ pollingStatus()?.pollingActive ? '✅' : '❌' }}
+      </div>
+      <p class="text-white dark:text-blue-200 mt-2 text-sm font-medium">{{ pollingStatus()?.pollingActive ? 'ACTIVE' : 'INACTIVE' }}</p>
+    </div>
+  </div>
+</div>
+
+<!-- Queue Statistics -->
+<div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+  <div class="bg-white dark:bg-slate-800 rounded-xl p-4 border border-gray-200 dark:border-slate-700 shadow-sm">
+    <div class="text-gray-500 dark:text-slate-400 text-sm">Total Jobs</div>
+    <div class="text-3xl font-bold text-gray-900 dark:text-white mt-2">{{ queueStats()?.total || 0 }}</div>
+  </div>
+  <div class="bg-emerald-50 dark:bg-green-900/40 rounded-xl p-4 border border-emerald-200 dark:border-green-700 shadow-sm">
+    <div class="text-emerald-600 dark:text-green-300 text-sm">Printed ✅</div>
+    <div class="text-3xl font-bold text-emerald-700 dark:text-green-200 mt-2">{{ queueStats()?.printed || 0 }}</div>
+  </div>
+  <div class="bg-amber-50 dark:bg-yellow-900/40 rounded-xl p-4 border border-amber-200 dark:border-yellow-700 shadow-sm">
+    <div class="text-amber-600 dark:text-yellow-300 text-sm">Processing ⏳</div>
+    <div class="text-3xl font-bold text-amber-700 dark:text-yellow-200 mt-2">{{ queueStats()?.processing || 0 }}</div>
+  </div>
+  <div class="bg-blue-50 dark:bg-blue-900/40 rounded-xl p-4 border border-blue-200 dark:border-blue-700 shadow-sm">
+    <div class="text-blue-600 dark:text-blue-300 text-sm">Pending 📌</div>
+    <div class="text-3xl font-bold text-blue-700 dark:text-blue-200 mt-2">{{ queueStats()?.pending || 0 }}</div>
+  </div>
+  <div class="bg-red-50 dark:bg-red-900/40 rounded-xl p-4 border border-red-200 dark:border-red-700 shadow-sm">
+    <div class="text-red-600 dark:text-red-300 text-sm">Failed ❌</div>
+    <div class="text-3xl font-bold text-red-700 dark:text-red-200 mt-2">{{ queueStats()?.failed || 0 }}</div>
+  </div>
+</div>
+
+<!-- Print Logs Table -->
+<div class="mb-6">
+  <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">📊 Recent Print Jobs</h3>
+
+  @if (logs().length === 0) {
+    <div class="bg-white dark:bg-slate-800 rounded-xl p-12 text-center border border-gray-200 dark:border-slate-700">
+      <p class="text-gray-500 dark:text-slate-400 text-lg">No print jobs yet</p>
+      <p class="text-gray-400 dark:text-slate-500 text-sm mt-2">Print jobs will appear here as they are processed</p>
+    </div>
+  } @else {
+    <div class="bg-white dark:bg-slate-800 rounded-xl overflow-hidden border border-gray-200 dark:border-slate-700 shadow-sm">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 dark:bg-slate-900 border-b border-gray-200 dark:border-slate-700">
+            <tr class="text-gray-500 dark:text-slate-400">
+              <th class="text-left py-4 px-6 font-medium">Job ID</th>
+              <th class="text-left py-4 px-6 font-medium">Printer</th>
+              <th class="text-left py-4 px-6 font-medium">Status</th>
+              <th class="text-left py-4 px-6 font-medium">Type</th>
+              <th class="text-left py-4 px-6 font-medium">Time</th>
+              <th class="text-left py-4 px-6 font-medium">Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (log of logs(); track log.jobId; let idx = $index) {
+              <tr
+                class="border-b border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors"
+                [class.bg-red-50]="log.status === 'failed'"
+                [class.dark:bg-red-950]="log.status === 'failed'"
+                [class.bg-yellow-50]="log.status === 'pending'"
+                [class.dark:bg-yellow-950]="log.status === 'pending'"
+                [class.bg-green-50]="log.status === 'printed' || log.status === 'success'"
+                [class.dark:bg-green-950]="log.status === 'printed' || log.status === 'success'"
+              >
+                <td class="py-4 px-6 font-mono text-xs">
+                  <span class="text-indigo-600 dark:text-blue-300 font-bold">{{ log.jobId ? log.jobId.slice(0, 12) : 'N/A' }}</span>
+                </td>
+                <td class="py-4 px-6 text-sm">
+                  <div class="font-semibold text-gray-900 dark:text-white">{{ log.printerName || log.printerId?.slice(0, 8) || 'Unknown' }}</div>
+                  <div class="text-xs text-gray-400 dark:text-slate-500">{{ log.printerId?.slice(0, 8) }}</div>
+                </td>
+                <td class="py-4 px-6">
+                  <span
+                    [class]="
+                      log.status === 'printed' || log.status === 'success'
+                        ? 'px-2.5 py-1 bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300 rounded-full text-xs font-medium'
+                        : log.status === 'failed'
+                          ? 'px-2.5 py-1 bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300 rounded-full text-xs font-medium'
+                          : log.status === 'pending'
+                            ? 'px-2.5 py-1 bg-yellow-100 dark:bg-yellow-900/50 text-yellow-700 dark:text-yellow-300 rounded-full text-xs font-medium'
+                            : log.status === 'processing'
+                              ? 'px-2.5 py-1 bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 rounded-full text-xs font-medium'
+                              : 'px-2.5 py-1 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-300 rounded-full text-xs font-medium'
+                    "
+                  >
+                    {{ log.status | uppercase }}
+                  </span>
+                </td>
+                <td class="py-4 px-6 text-sm">
+                  <span class="px-2 py-1 bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 rounded text-xs">{{ log.jobType || 'print_job' }}</span>
+                </td>
+                <td class="py-4 px-6 text-gray-400 dark:text-slate-500 text-xs whitespace-nowrap">{{ formatTime(log.timestamp) }}</td>
+                <td class="py-4 px-6">
+                  @if (log.error) {
+                    <div class="text-red-500 dark:text-red-400 text-xs font-mono max-w-xs truncate" title="{{ log.error }}">
+                      ❌ {{ log.error.slice(0, 35) }}...
+                    </div>
+                  } @else if (log.retryCount > 0) {
+                    <div class="text-amber-500 dark:text-yellow-400 text-xs">
+                      🔄 Retry {{ log.retryCount }}/{{ log.maxRetries || 3 }}
+                    </div>
+                  } @else {
+                    <div class="text-gray-300 dark:text-slate-600 text-xs">—</div>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  }
+</div>
+
+<!-- Logs Info -->
+<div class="bg-white dark:bg-slate-800 rounded-xl p-4 border border-gray-200 dark:border-slate-700 shadow-sm">
+  <p class="text-gray-500 dark:text-slate-400 text-sm">
+    📌 Showing <span class="font-bold text-gray-900 dark:text-white">{{ logs().length }}</span> logs
+    (Last updated: {{ lastUpdated() }})
+  </p>
+</div>

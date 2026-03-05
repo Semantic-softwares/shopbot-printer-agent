@@ -1,0 +1,145 @@
+{
+  "name": "shopbot-printer",
+  "version": "1.0.0",
+  "description": "ShopBot Printer - Enterprise Print Management for ShopBot POS",
+  "author": "ShopBot <info@shopbot.africa>",
+  "main": "main.js",
+  "homepage": "./",
+  "scripts": {
+    "ng": "ng",
+    "start": "concurrently \"npm run ng:serve\" \"wait-on http://localhost:4201 && electron .\"",
+    "ng:serve": "ng serve --port 4201",
+    "ng:build": "ng build",
+    "build": "ng build",
+    "electron": "electron .",
+    "electron:dev": "npm run electron",
+    "test": "ng test",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "prettier": {
+    "printWidth": 100,
+    "singleQuote": true,
+    "overrides": [
+      {
+        "files": "*.html",
+        "options": {
+          "parser": "angular"
+        }
+      }
+    ]
+  },
+  "private": true,
+  "packageManager": "npm@10.9.2",
+  "dependencies": {
+    "@abandonware/noble": "^1.9.2-26",
+    "@angular/animations": "^21.0.0",
+    "@angular/cdk": "~21.1.4",
+    "@angular/common": "^21.0.0",
+    "@angular/compiler": "^21.0.0",
+    "@angular/core": "^21.0.0",
+    "@angular/forms": "^21.0.0",
+    "@angular/material": "~21.1.4",
+    "@angular/platform-browser": "^21.0.0",
+    "@angular/platform-browser-dynamic": "^21.0.0",
+    "@angular/router": "^21.0.0",
+    "@ngrx/signals": "^21.0.1",
+    "auto-launch": "^5.0.6",
+    "axios": "^1.6.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.0",
+    "express": "^4.18.2",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0",
+    "usb": "^2.17.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@angular/build": "^21.0.1",
+    "@angular/cli": "^21.0.1",
+    "@angular/compiler-cli": "^21.0.0",
+    "@angular/material": "^21.1.4",
+    "@types/cors": "^2.8.13",
+    "@types/express": "^4.17.17",
+    "@types/node": "^20.0.0",
+    "@types/uuid": "^9.0.0",
+    "autoprefixer": "^10.4.14",
+    "concurrently": "^8.2.0",
+    "electron": "^27.0.0",
+    "electron-builder": "^24.6.4",
+    "electron-is-dev": "^2.0.0",
+    "jsdom": "^27.1.0",
+    "postcss": "^8.4.27",
+    "tailwindcss": "^3.3.3",
+    "typescript": "~5.9.2",
+    "vitest": "^4.0.8",
+    "wait-on": "^7.0.1"
+  },
+  "build": {
+    "appId": "com.shopbot.printer",
+    "productName": "ShopBot Printer",
+    "files": [
+      "dist/shopbot-printer/browser/**/*",
+      "main.js",
+      "preload.js",
+      "node_modules/**/*",
+      "!node_modules/@angular/cli/**",
+      "!node_modules/@angular/build/**",
+      "!node_modules/@angular/compiler-cli/**",
+      "!node_modules/typescript/**",
+      "!node_modules/tailwindcss/**",
+      "!node_modules/postcss/**",
+      "!node_modules/autoprefixer/**",
+      "!node_modules/vitest/**",
+      "!node_modules/jsdom/**",
+      "!node_modules/electron/**",
+      "!node_modules/electron-builder/**"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.business"
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office"
+    }
+  }
+}

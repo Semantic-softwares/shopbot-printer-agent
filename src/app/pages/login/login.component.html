@@ -1,0 +1,165 @@
+<!-- Login Page -->
+<div class="min-h-screen w-full flex flex-col lg:flex-row bg-gray-50 dark:bg-slate-900 transition-colors duration-200">
+
+  <!-- Left Column - Form -->
+  <div class="w-full lg:w-1/2 flex flex-col justify-center px-6 py-12 lg:px-16 xl:px-24">
+    <!-- Brand -->
+    <div class="mb-8">
+      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">🖨️ ShopBot Printer</h1>
+      <p class="text-gray-500 dark:text-slate-400 mt-1">Welcome back</p>
+    </div>
+
+    <!-- Form Card -->
+    <div class="max-w-md">
+      <h2 class="text-2xl font-semibold text-gray-800 dark:text-white mb-2">Sign in to your account</h2>
+      <p class="text-gray-500 dark:text-slate-400 mb-8">Connect your store to start printing</p>
+
+      <!-- Error Alert -->
+      @if (errorMessage()) {
+        <div class="mb-6 p-4 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg">
+          <p class="text-sm text-red-700 dark:text-red-400">{{ errorMessage() }}</p>
+        </div>
+      }
+
+      <form [formGroup]="loginForm" (ngSubmit)="onSubmit()" class="flex flex-col gap-5">
+        <!-- Store Number -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Store Number</label>
+          <div class="relative">
+            <input type="text"
+                   formControlName="storeNumber"
+                   placeholder="Enter 4-digit store number"
+                   maxlength="4"
+                   class="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-colors placeholder-gray-400 dark:placeholder-slate-500" />
+            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-slate-500 text-lg">🏪</span>
+          </div>
+          @if (loginForm.get('storeNumber')?.touched && loginForm.get('storeNumber')?.hasError('required')) {
+            <p class="mt-1 text-xs text-red-500">Store number is required</p>
+          }
+          @if (loginForm.get('storeNumber')?.touched && (loginForm.get('storeNumber')?.hasError('pattern') || loginForm.get('storeNumber')?.hasError('minlength'))) {
+            <p class="mt-1 text-xs text-red-500">Enter a valid 4-digit store number</p>
+          }
+        </div>
+
+        <!-- Email -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Email</label>
+          <div class="relative">
+            <input type="email"
+                   formControlName="email"
+                   placeholder="you@example.com"
+                   class="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-colors placeholder-gray-400 dark:placeholder-slate-500" />
+            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-slate-500 text-lg">✉️</span>
+          </div>
+          @if (loginForm.get('email')?.touched && loginForm.get('email')?.hasError('required')) {
+            <p class="mt-1 text-xs text-red-500">Email is required</p>
+          }
+          @if (loginForm.get('email')?.touched && loginForm.get('email')?.hasError('email')) {
+            <p class="mt-1 text-xs text-red-500">Please enter a valid email</p>
+          }
+        </div>
+
+        <!-- Password -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Password</label>
+          <div class="relative">
+            <input [type]="hide() ? 'password' : 'text'"
+                   formControlName="password"
+                   placeholder="••••••••"
+                   class="w-full px-4 py-3 pr-12 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-colors placeholder-gray-400 dark:placeholder-slate-500" />
+            <button type="button"
+                    (click)="togglePasswordVisibility($event)"
+                    class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 transition-colors"
+                    [attr.aria-label]="hide() ? 'Show password' : 'Hide password'">
+              @if (hide()) {
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                </svg>
+              } @else {
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+              }
+            </button>
+          </div>
+          @if (loginForm.get('password')?.touched && loginForm.get('password')?.hasError('required')) {
+            <p class="mt-1 text-xs text-red-500">Password is required</p>
+          }
+        </div>
+
+        <!-- Submit -->
+        <button type="submit"
+                [disabled]="!loginForm.valid || loading()"
+                class="w-full py-3 mt-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+          @if (loading()) {
+            <div class="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+            Signing in...
+          } @else {
+            Sign in
+          }
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Right Column - Hero -->
+  <div class="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-800 relative overflow-hidden">
+    <!-- Background Pattern -->
+    <div class="absolute inset-0 opacity-10">
+      <div class="absolute top-0 left-0 w-96 h-96 bg-white rounded-full -translate-x-1/2 -translate-y-1/2"></div>
+      <div class="absolute bottom-0 right-0 w-80 h-80 bg-white rounded-full translate-x-1/3 translate-y-1/3"></div>
+      <div class="absolute top-1/2 left-1/2 w-64 h-64 bg-white rounded-full -translate-x-1/2 -translate-y-1/2"></div>
+    </div>
+
+    <!-- Content -->
+    <div class="relative z-10 flex flex-col justify-center px-12 xl:px-16 text-white">
+      <div class="mb-10">
+        <h2 class="text-3xl xl:text-4xl font-bold leading-tight mb-4">
+          Enterprise Print Management
+        </h2>
+        <p class="text-indigo-200 text-lg">
+          Connect your store's printers, manage print jobs, and monitor everything from one place.
+        </p>
+      </div>
+
+      <!-- Feature Cards -->
+      <div class="grid grid-cols-2 gap-5">
+        <div class="bg-white/10 backdrop-blur-sm rounded-xl p-5">
+          <span class="text-3xl mb-3 block">🖨️</span>
+          <h4 class="font-semibold text-white mb-1">Multi-Printer</h4>
+          <p class="text-indigo-200 text-sm">Network, USB & Bluetooth support</p>
+        </div>
+        <div class="bg-white/10 backdrop-blur-sm rounded-xl p-5">
+          <span class="text-3xl mb-3 block">📋</span>
+          <h4 class="font-semibold text-white mb-1">Auto Print</h4>
+          <p class="text-indigo-200 text-sm">Automatic order receipt printing</p>
+        </div>
+        <div class="bg-white/10 backdrop-blur-sm rounded-xl p-5">
+          <span class="text-3xl mb-3 block">📡</span>
+          <h4 class="font-semibold text-white mb-1">Real-time Polling</h4>
+          <p class="text-indigo-200 text-sm">Instant print job detection</p>
+        </div>
+        <div class="bg-white/10 backdrop-blur-sm rounded-xl p-5">
+          <span class="text-3xl mb-3 block">📊</span>
+          <h4 class="font-semibold text-white mb-1">Job Monitoring</h4>
+          <p class="text-indigo-200 text-sm">Track every print in real-time</p>
+        </div>
+      </div>
+
+      <!-- Trust Badge -->
+      <div class="mt-12 pt-8 border-t border-white/20">
+        <div class="flex items-center gap-4">
+          <div class="flex -space-x-2">
+            <div class="w-10 h-10 rounded-full bg-indigo-400 border-2 border-white flex items-center justify-center text-sm font-medium">SB</div>
+            <div class="w-10 h-10 rounded-full bg-purple-400 border-2 border-white flex items-center justify-center text-sm font-medium">🖨️</div>
+          </div>
+          <div>
+            <p class="text-white font-medium">ShopBot Print Service</p>
+            <p class="text-indigo-200 text-sm">Reliable thermal printing for your business</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

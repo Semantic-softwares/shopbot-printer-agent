@@ -1,0 +1,70 @@
+<!-- Header -->
+<div class="mb-8">
+  <h2 class="text-3xl font-bold text-gray-900 dark:text-white mb-1">Dashboard</h2>
+  <p class="text-gray-500 dark:text-slate-400 text-sm">Overview of your print system</p>
+</div>
+
+<!-- Stats Grid -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+  <div class="bg-gradient-to-br from-blue-500 to-blue-600 dark:from-blue-600 dark:to-blue-700 rounded-xl p-6 text-white shadow-sm">
+    <div class="text-blue-100 text-sm font-medium">Total Printers</div>
+    <div class="text-3xl font-bold mt-2">{{ printerCount() }}</div>
+  </div>
+  <div class="bg-gradient-to-br from-emerald-500 to-emerald-600 dark:from-green-600 dark:to-green-700 rounded-xl p-6 text-white shadow-sm">
+    <div class="text-emerald-100 text-sm font-medium">Online</div>
+    <div class="text-3xl font-bold mt-2">{{ onlinePrinters() }}</div>
+  </div>
+  <div class="bg-gradient-to-br from-amber-500 to-amber-600 dark:from-yellow-600 dark:to-yellow-700 rounded-xl p-6 text-white shadow-sm">
+    <div class="text-amber-100 text-sm font-medium">Pending Jobs</div>
+    <div class="text-3xl font-bold mt-2">{{ pendingJobs() }}</div>
+  </div>
+  <div class="bg-gradient-to-br from-violet-500 to-violet-600 dark:from-purple-600 dark:to-purple-700 rounded-xl p-6 text-white shadow-sm">
+    <div class="text-violet-100 text-sm font-medium">Success Rate</div>
+    <div class="text-3xl font-bold mt-2">{{ successRate() }}%</div>
+  </div>
+</div>
+
+<!-- Recent Logs -->
+<div class="bg-white dark:bg-slate-800 rounded-xl p-6 border border-gray-200 dark:border-slate-700 shadow-sm">
+  <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Recent Print Jobs</h3>
+  @if (logs().length === 0) {
+    <p class="text-gray-400 dark:text-slate-500 text-center py-8">No print jobs yet</p>
+  } @else {
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="border-b border-gray-200 dark:border-slate-700">
+          <tr class="text-gray-500 dark:text-slate-400">
+            <th class="text-left py-3 px-4 font-medium">Job ID</th>
+            <th class="text-left py-3 px-4 font-medium">Printer</th>
+            <th class="text-left py-3 px-4 font-medium">Status</th>
+            <th class="text-left py-3 px-4 font-medium">Time</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (log of logs().slice(0, 5); track log.jobId) {
+            <tr class="border-b border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors">
+              <td class="py-3 px-4 text-gray-600 dark:text-slate-300 font-mono text-xs">{{ log.jobId.slice(0, 8) }}</td>
+              <td class="py-3 px-4 text-gray-700 dark:text-slate-300">{{ log.printerId }}</td>
+              <td class="py-3 px-4">
+                <span
+                  [class]="
+                    log.status === 'success'
+                      ? 'px-2.5 py-1 bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300 rounded-full text-xs font-medium'
+                      : log.status === 'failed'
+                        ? 'px-2.5 py-1 bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300 rounded-full text-xs font-medium'
+                        : log.status === 'pending'
+                          ? 'px-2.5 py-1 bg-yellow-100 dark:bg-yellow-900/50 text-yellow-700 dark:text-yellow-300 rounded-full text-xs font-medium'
+                          : 'px-2.5 py-1 bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 rounded-full text-xs font-medium'
+                  "
+                >
+                  {{ log.status }}
+                </span>
+              </td>
+              <td class="py-3 px-4 text-gray-400 dark:text-slate-500 text-xs">{{ formatTime(log.timestamp) }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

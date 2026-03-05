@@ -1,0 +1,84 @@
+<!-- Header -->
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold text-gray-900 dark:text-white">🖨️ Printers</h1>
+  <div class="flex gap-3">
+    <button (click)="goToAddPrinter()"
+            class="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+      </svg>
+      Add Printer
+    </button>
+    <button (click)="refreshPrinters()" [disabled]="isLoading()"
+            class="inline-flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+      </svg>
+      Refresh
+    </button>
+  </div>
+</div>
+
+<!-- Loading -->
+@if (isLoading()) {
+  <div class="flex flex-col items-center justify-center py-24 gap-4">
+    <div class="w-10 h-10 border-4 border-indigo-200 dark:border-indigo-800 border-t-indigo-600 dark:border-t-indigo-400 rounded-full animate-spin"></div>
+    <p class="text-sm text-gray-500 dark:text-slate-400">Loading printers...</p>
+  </div>
+}
+
+<!-- Empty -->
+@else if (printers().length === 0) {
+  <div class="flex flex-col items-center justify-center py-24 gap-4">
+    <div class="w-20 h-20 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center">
+      <span class="text-4xl">📦</span>
+    </div>
+    <h2 class="text-xl font-semibold text-gray-900 dark:text-white">No printers added yet</h2>
+    <p class="text-gray-500 dark:text-slate-400 text-sm">Add your first printer to get started</p>
+    <button (click)="goToAddPrinter()"
+            class="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors mt-2">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+      </svg>
+      Add Your First Printer
+    </button>
+  </div>
+}
+
+<!-- Printer Cards -->
+@else {
+  <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+    @for (printer of printers(); track printer.id) {
+      <div class="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
+        <!-- Card Header -->
+        <div class="flex items-start gap-3 p-5 border-b border-gray-100 dark:border-slate-700">
+          <span class="text-3xl leading-none">{{ getPrinterIcon(printer.type) }}</span>
+          <div class="flex-1 min-w-0">
+            <h3 class="text-base font-semibold text-gray-900 dark:text-white truncate">{{ printer.name }}</h3>
+            <span class="inline-block mt-1 text-xs font-medium uppercase tracking-wider text-gray-400 dark:text-slate-500">{{ getPrinterTypeName(printer.type) }}</span>
+          </div>
+        </div>
+
+        <!-- Card Body -->
+        <div class="px-5 py-4 space-y-1.5 text-sm">
+          <p class="text-gray-600 dark:text-slate-300"><span class="font-medium text-gray-500 dark:text-slate-400">Address:</span> {{ getPrinterDetails(printer) }}</p>
+          @if (printer.createdAt) {
+            <p class="text-gray-600 dark:text-slate-300"><span class="font-medium text-gray-500 dark:text-slate-400">Added:</span> {{ formatTime(printer.createdAt) }}</p>
+          }
+        </div>
+
+        <!-- Card Actions -->
+        <div class="flex justify-end gap-2 px-5 py-3 border-t border-gray-100 dark:border-slate-700">
+          <button (click)="testPrinter(printer)"
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors">
+            ✅ Test
+          </button>
+          <button (click)="removePrinter(printer.id)"
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors">
+            🗑️ Remove
+          </button>
+        </div>
+      </div>
+    }
+  </div>
+}
