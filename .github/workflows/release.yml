@@ -10,6 +10,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     
     strategy:
+      fail-fast: false # Don't cancel other builds if one fails
       matrix:
         os: [macos-latest, windows-latest]
     
@@ -31,8 +32,8 @@ jobs:
         if: matrix.os == 'macos-latest'
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          CSC_LINK: ${{ secrets.MAC_CERT_P12 }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          # Skip code signing if no certificate is configured
+          CSC_IDENTITY_AUTO_DISCOVERY: false
         run: npm run release:mac
 
       # Windows: Build and publish
@@ -40,6 +41,4 @@ jobs:
         if: matrix.os == 'windows-latest'
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          CSC_LINK: ${{ secrets.WIN_CERT_P12 }}
-          CSC_KEY_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
         run: npm run release:win

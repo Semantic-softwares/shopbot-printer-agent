@@ -123,7 +123,8 @@
         "dmg",
         "zip"
       ],
-      "category": "public.app-category.business"
+      "category": "public.app-category.business",
+      "identity": null
     },
     "dmg": {
       "contents": [
