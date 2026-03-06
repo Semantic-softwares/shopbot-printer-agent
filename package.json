@@ -1,6 +1,6 @@
 {
   "name": "shopbot-printer",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "ShopBot Printer - Enterprise Print Management for ShopBot POS",
   "author": "ShopBot <info@shopbot.africa>",
   "main": "main.js",

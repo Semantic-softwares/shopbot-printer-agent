@@ -18,6 +18,18 @@ export class LogsComponent implements OnInit, OnDestroy {
   pollingStatus = signal<any>(null);
   queueStats = signal<any>(null);
   lastUpdated = signal<string>('—');
+  restarting = signal<boolean>(false);
+
+  pollingHealthGradient = computed(() => {
+    const health = this.pollingStatus()?.health;
+    switch (health) {
+      case 'healthy':  return 'from-green-500 to-emerald-500 border-green-400';
+      case 'degraded': return 'from-yellow-500 to-amber-500 border-yellow-400';
+      case 'critical':
+      case 'stale':    return 'from-red-500 to-rose-500 border-red-400';
+      default:         return 'from-indigo-500 to-blue-500 border-indigo-400';
+    }
+  });
 
   private refreshSubscription: Subscription | null = null;
 
@@ -85,6 +97,28 @@ export class LogsComponent implements OnInit, OnDestroy {
         console.error('Failed to load queue stats:', err);
       },
     });
+  }
+
+  restartPolling(): void {
+    this.restarting.set(true);
+    this.printerApi.restartPolling().subscribe({
+      next: () => {
+        this.restarting.set(false);
+        this.loadPollingStatus();
+      },
+      error: (err) => {
+        console.error('Failed to restart polling:', err);
+        this.restarting.set(false);
+      },
+    });
+  }
+
+  formatUptime(seconds: number | undefined): string {
+    if (!seconds) return '—';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
   }
 
   clearAllLogs(): void {

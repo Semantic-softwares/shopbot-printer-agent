@@ -99,6 +99,10 @@ export class PrinterApiService {
     return this.http.get<any>(`${this.baseUrl}/polling/status`);
   }
 
+  restartPolling(): Observable<{ success: boolean; message: string }> {
+    return this.http.post<{ success: boolean; message: string }>(`${this.baseUrl}/polling/restart`, {});
+  }
+
   // Bluetooth printer methods
   discoverBluetoothPrinters(): Observable<{ success: boolean; discovered: number; printers: any[] }> {
     return this.http.post<{ success: boolean; discovered: number; printers: any[] }>(

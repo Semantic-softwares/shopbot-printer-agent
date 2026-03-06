@@ -16,6 +16,7 @@ export class DashboardComponent implements OnInit {
   private printers = signal<any[]>([]);
   private queueStats = signal({ total: 0, pending: 0, completed: 0, failed: 0 });
   readonly logs = signal<any[]>([]);
+  readonly pollingStatus = signal<any>(null);
 
   readonly printerCount = computed(() => this.printers().length);
   readonly onlinePrinters = computed(
@@ -47,6 +48,11 @@ export class DashboardComponent implements OnInit {
     this.printerApi.getQueueStats().subscribe({
       next: (stats) => this.queueStats.set(stats),
       error: (err) => console.error('Failed to load queue stats:', err),
+    });
+
+    this.printerApi.getPollingStatus().subscribe({
+      next: (status) => this.pollingStatus.set(status),
+      error: (err) => console.error('Failed to load polling status:', err),
     });
   }
 

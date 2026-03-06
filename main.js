@@ -63,8 +63,14 @@ const autoLauncher = new AutoLaunch({
 let mainWindow = null;
 let expressServer = null;
 let pollingActive = false;
-let pollingInterval = null;
-let isCurrentlyPolling = false; // Guard against overlapping poll cycles
+let pollingTimeoutId = null;          // setTimeout-based chain (NOT setInterval)
+let isCurrentlyPolling = false;       // Guard against overlapping poll cycles
+let consecutiveFailures = 0;
+let lastSuccessfulPoll = Date.now();
+const MAX_CONSECUTIVE_FAILURES = 10;
+const WATCHDOG_INTERVAL_MS = 15000;   // Check every 15s that polling is alive
+const MAX_POLL_SILENCE_MS = 30000;    // If no success in 30s, force restart
+let pollWatchdogId = null;
 
 // In-memory storage
 const printerStore = {
@@ -127,7 +133,7 @@ function logMessage(level, context, message, data = '') {
 // ============================================================
 
 /**
- * Poll backend for pending print jobs
+ * Poll backend for pending print jobs (single cycle with timeout protection)
  */
 async function pollPrintJobs() {
   // Prevent overlapping polls — if previous cycle is still processing (e.g. slow BLE print), skip
@@ -147,6 +153,11 @@ async function pollPrintJobs() {
     }
     
     const url = `${config.apiBaseUrl}/print-jobs/polling/pending`;
+
+    // AbortController for fetch timeout — prevent hung connections on Windows
+    const controller = new AbortController();
+    const abortTimeout = setTimeout(() => controller.abort(), 10000);
+
     const response = await axios.get(url, {
       params: {
         storeId: storeId,
@@ -157,8 +168,11 @@ async function pollPrintJobs() {
         'X-Device-Id': config.deviceId,
         'X-Store-Id': storeId,
       },
-      timeout: 5000,
+      timeout: 10000,
+      signal: controller.signal,
     });
+
+    clearTimeout(abortTimeout);
 
     if (response.data.success && response.data.data.length > 0) {
       logMessage('INFO', 'PollingService', `Found ${response.data.data.length} pending job(s)`);
@@ -172,6 +186,7 @@ async function pollPrintJobs() {
     }
   } catch (error) {
     logMessage('ERROR', 'PollingService', 'Failed to poll jobs', error.message);
+    throw error; // Re-throw so the scheduler can track consecutive failures
   } finally {
     isCurrentlyPolling = false;
   }
@@ -183,11 +198,34 @@ async function pollPrintJobs() {
 async function processBackendJob(job) {
   logMessage('INFO', 'JobProcessor', `Processing job: ${job._id} (Type: ${job.type}, Order: ${job.orderMetadata?.reference || job._id})`);
 
+  // Create a log entry upfront so it appears in the UI immediately
+  const logEntry = {
+    _id: job._id,
+    id: job._id,
+    jobId: job._id,
+    printer: null,
+    printerId: null,
+    printerName: job.printerDetails?.name || 'Unknown',
+    status: 'processing',
+    type: job.type || 'print_job',
+    jobType: job.type || 'print_job',
+    timestamp: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    error: null,
+    lastError: null,
+    retryCount: 0,
+    maxRetries: 3,
+    orderRef: job.orderMetadata?.reference || null,
+  };
+  printerStore.printLogs.push(logEntry);
+
   try {
     // Step 1: Lock job
     const lockSuccess = await lockBackendJob(job._id);
     if (!lockSuccess) {
       logMessage('WARN', 'JobProcessor', `Could not lock job ${job._id}, another device may have locked it`);
+      logEntry.status = 'skipped';
+      logEntry.error = 'Could not lock — another device may have it';
       return;
     }
 
@@ -247,15 +285,22 @@ async function processBackendJob(job) {
       logMessage('DEBUG', 'JobProcessor', `Registered printers: ${printerStore.printers.map(p => `${p.name}(${p.type})`).join(', ')}`);
       // Release the lock so another device with the right printer can pick it up
       await failBackendJob(job._id, `No matching printer found for "${printerName}" (${connType}). This device does not have this printer connected.`);
+      logEntry.status = 'failed';
+      logEntry.error = `No matching printer for "${printerName}" (${connType})`;
       return;
     }
 
     logMessage('INFO', 'JobProcessor', `✅ Using printer: ${printer.name} (${printer.type}) for ${job.type} job`);
+    logEntry.printer = printer.id || printer.name;
+    logEntry.printerId = printer.id || printer.name;
+    logEntry.printerName = printer.name;
 
     // Step 3: Parse ESC/POS payload
     if (!job.receipt) {
       logMessage('ERROR', 'JobProcessor', `No receipt data in job`);
       await failBackendJob(job._id, 'No receipt data provided');
+      logEntry.status = 'failed';
+      logEntry.error = 'No receipt data provided';
       return;
     }
 
@@ -264,6 +309,8 @@ async function processBackendJob(job) {
     if (!payload) {
       logMessage('ERROR', 'JobProcessor', `Failed to parse receipt payload`);
       await failBackendJob(job._id, 'Failed to parse receipt payload');
+      logEntry.status = 'failed';
+      logEntry.error = 'Failed to parse receipt payload';
       return;
     }
 
@@ -276,6 +323,8 @@ async function processBackendJob(job) {
     if (!printResult.success) {
       logMessage('ERROR', 'JobProcessor', `📤 Print send failed: ${printResult.error}`);
       await failBackendJob(job._id, printResult.error || 'Unknown print error');
+      logEntry.status = 'failed';
+      logEntry.error = printResult.error || 'Unknown print error';
       return;
     }
 
@@ -285,11 +334,16 @@ async function processBackendJob(job) {
     const completeSuccess = await completeBackendJob(job._id);
     if (completeSuccess) {
       logMessage('INFO', 'JobProcessor', `✅ Job completed: ${job._id}`);
+      logEntry.status = 'printed';
     } else {
       logMessage('WARN', 'JobProcessor', `Job printed but failed to mark complete: ${job._id}`);
+      logEntry.status = 'printed';
+      logEntry.error = 'Printed but failed to mark complete on server';
     }
   } catch (error) {
     logMessage('ERROR', 'JobProcessor', `Unexpected error: ${error.message}`, error);
+    logEntry.status = 'failed';
+    logEntry.error = error.message;
     try {
       await failBackendJob(job._id, error.message);
     } catch (failError) {
@@ -693,7 +747,9 @@ async function sendToBluetoothPrinterDirect(data, printer) {
 }
 
 /**
- * Start polling for backend jobs
+ * Start resilient polling for backend jobs.
+ * Uses setTimeout chain (not setInterval) so a hung request can't block future polls.
+ * Includes exponential backoff, watchdog, and power-state recovery.
  */
 function startBackendPolling() {
   if (pollingActive) {
@@ -702,22 +758,178 @@ function startBackendPolling() {
   }
 
   pollingActive = true;
-  logMessage('INFO', 'Polling', `🚀 Starting backend polling (${config.pollInterval}ms)`);
+  consecutiveFailures = 0;
+  lastSuccessfulPoll = Date.now();
+
+  logMessage('INFO', 'Polling', `🚀 Starting resilient polling (${config.pollInterval}ms)`);
   logMessage('INFO', 'Polling', `API URL: ${config.apiBaseUrl}`);
   logMessage('INFO', 'Polling', `Branch ID: ${config.branchId}`);
   logMessage('INFO', 'Polling', `Device ID: ${config.deviceId}`);
 
-  // Initial poll
-  pollPrintJobs();
+  // Start the setTimeout-based poll loop
+  scheduleNextPoll();
 
-  // Regular polling
-  pollingInterval = setInterval(() => {
-    pollPrintJobs();
-  }, config.pollInterval);
+  // Start the watchdog that monitors polling health
+  startPollWatchdog();
+
+  // Listen for Windows sleep/wake events
+  setupPowerMonitor();
 }
 
 /**
- * Stop polling
+ * Schedule the next poll using setTimeout (not setInterval).
+ * This ensures a hung fetch never blocks future polls.
+ */
+function scheduleNextPoll() {
+  if (!pollingActive) return;
+
+  // Exponential backoff on consecutive failures: 3s → 6s → 12s → 24s → max 30s
+  let delay = config.pollInterval;
+  if (consecutiveFailures > 0) {
+    delay = Math.min(config.pollInterval * Math.pow(2, consecutiveFailures), 30000);
+    logMessage('DEBUG', 'Polling', `Backoff delay: ${delay}ms (failures: ${consecutiveFailures})`);
+  }
+
+  pollingTimeoutId = setTimeout(async () => {
+    if (!pollingActive) return;
+
+    try {
+      await pollPrintJobs();
+      consecutiveFailures = 0;
+      lastSuccessfulPoll = Date.now();
+    } catch (err) {
+      consecutiveFailures++;
+      logMessage('WARN', 'Polling', `Poll failed (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}): ${err.message}`);
+
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        logMessage('ERROR', 'Polling', `${MAX_CONSECUTIVE_FAILURES} consecutive failures — resetting connection`);
+        await resetPollingConnection();
+      }
+    }
+
+    // Always schedule next poll regardless of success/failure
+    scheduleNextPoll();
+  }, delay);
+}
+
+/**
+ * Watchdog: runs on a separate interval, detects if polling has gone silent.
+ * If no successful poll in MAX_POLL_SILENCE_MS, force-restart the poll loop.
+ */
+function startPollWatchdog() {
+  if (pollWatchdogId) {
+    clearInterval(pollWatchdogId);
+  }
+
+  pollWatchdogId = setInterval(() => {
+    if (!pollingActive) return;
+
+    const silenceMs = Date.now() - lastSuccessfulPoll;
+
+    if (silenceMs > MAX_POLL_SILENCE_MS) {
+      logMessage('WARN', 'Watchdog', `No successful poll in ${Math.round(silenceMs / 1000)}s — force restarting poll loop`);
+
+      // Kill the current pending timeout
+      if (pollingTimeoutId) {
+        clearTimeout(pollingTimeoutId);
+        pollingTimeoutId = null;
+      }
+
+      consecutiveFailures = 0;
+      lastSuccessfulPoll = Date.now(); // Prevent immediate re-trigger
+      scheduleNextPoll();
+    }
+
+    // Emit heartbeat to Angular frontend
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('polling:heartbeat', {
+        pollingActive,
+        lastSuccessfulPoll: new Date(lastSuccessfulPoll).toISOString(),
+        consecutiveFailures,
+        silenceMs,
+        uptime: process.uptime(),
+      });
+    }
+  }, WATCHDOG_INTERVAL_MS);
+}
+
+/**
+ * Reset polling connection after too many consecutive failures.
+ * Waits a few seconds for the network to stabilize.
+ */
+async function resetPollingConnection() {
+  logMessage('INFO', 'Polling', 'Resetting polling connection...');
+  consecutiveFailures = 0;
+
+  // Wait 5s to let the network recover (e.g. after Windows sleep)
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+
+  // Test connectivity before resuming
+  try {
+    await axios.get(`${config.apiBaseUrl}/health`, { timeout: 5000 });
+    logMessage('INFO', 'Polling', 'Server reachable — polling will resume normally');
+  } catch (_err) {
+    logMessage('WARN', 'Polling', 'Server not reachable — continuing with backoff');
+    consecutiveFailures = 3; // Start with some backoff
+  }
+}
+
+/**
+ * Setup Electron powerMonitor to handle Windows sleep/wake/lock/unlock.
+ * Timers freeze during sleep and may not resume — this forces a restart.
+ */
+function setupPowerMonitor() {
+  const { powerMonitor } = require('electron');
+  if (!powerMonitor) return;
+
+  // Remove any previous listeners to avoid duplicates
+  powerMonitor.removeAllListeners('suspend');
+  powerMonitor.removeAllListeners('resume');
+  powerMonitor.removeAllListeners('lock-screen');
+  powerMonitor.removeAllListeners('unlock-screen');
+
+  powerMonitor.on('suspend', () => {
+    logMessage('INFO', 'Power', '⚡ System suspending — pausing poll timer');
+    if (pollingTimeoutId) {
+      clearTimeout(pollingTimeoutId);
+      pollingTimeoutId = null;
+    }
+  });
+
+  powerMonitor.on('resume', () => {
+    logMessage('INFO', 'Power', '⚡ System resumed — restarting polling in 3s');
+    setTimeout(() => {
+      if (pollingActive) {
+        consecutiveFailures = 0;
+        lastSuccessfulPoll = Date.now();
+        logMessage('INFO', 'Power', '⚡ Restarting poll loop after wake');
+        scheduleNextPoll();
+      }
+    }, 3000);
+  });
+
+  powerMonitor.on('lock-screen', () => {
+    logMessage('INFO', 'Power', '🔒 Screen locked — polling continues');
+  });
+
+  powerMonitor.on('unlock-screen', () => {
+    logMessage('INFO', 'Power', '🔓 Screen unlocked — verifying polling health');
+    const silenceMs = Date.now() - lastSuccessfulPoll;
+    if (silenceMs > MAX_POLL_SILENCE_MS && pollingActive) {
+      logMessage('WARN', 'Power', `Post-unlock: polling silent for ${Math.round(silenceMs / 1000)}s — restarting`);
+      if (pollingTimeoutId) {
+        clearTimeout(pollingTimeoutId);
+        pollingTimeoutId = null;
+      }
+      consecutiveFailures = 0;
+      lastSuccessfulPoll = Date.now();
+      scheduleNextPoll();
+    }
+  });
+}
+
+/**
+ * Stop polling completely — clears the poll loop and the watchdog.
  */
 function stopBackendPolling() {
   if (!pollingActive) {
@@ -725,11 +937,18 @@ function stopBackendPolling() {
   }
 
   pollingActive = false;
-  if (pollingInterval) {
-    clearInterval(pollingInterval);
-    pollingInterval = null;
+
+  if (pollingTimeoutId) {
+    clearTimeout(pollingTimeoutId);
+    pollingTimeoutId = null;
   }
 
+  if (pollWatchdogId) {
+    clearInterval(pollWatchdogId);
+    pollWatchdogId = null;
+  }
+
+  consecutiveFailures = 0;
   logMessage('INFO', 'Polling', '🛑 Backend polling stopped');
 }
 function checkPrinterStatus(printer) {
@@ -1444,8 +1663,15 @@ function startExpressServer() {
     res.json({ status: 'ok' });
   });
 
-  // Polling status
+  // Polling status (includes health info)
   expressApp.get('/api/polling/status', (req, res) => {
+    const silenceMs = Date.now() - lastSuccessfulPoll;
+    let health = 'healthy';
+    if (!pollingActive) health = 'stopped';
+    else if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) health = 'critical';
+    else if (consecutiveFailures >= 3) health = 'degraded';
+    else if (silenceMs > MAX_POLL_SILENCE_MS) health = 'stale';
+
     res.json({
       pollingActive: pollingActive,
       pollInterval: config.pollInterval,
@@ -1454,6 +1680,11 @@ function startExpressServer() {
       deviceId: config.deviceId,
       printerCount: printerStore.printers.length,
       onlinePrinters: printerStore.printers.filter((p) => p.status === 'online').length,
+      health,
+      consecutiveFailures,
+      lastSuccessfulPoll: new Date(lastSuccessfulPoll).toISOString(),
+      silenceMs,
+      uptime: process.uptime(),
     });
   });
 
@@ -1528,6 +1759,16 @@ function startExpressServer() {
   expressApp.post('/api/polling/stop', (req, res) => {
     stopBackendPolling();
     res.json({ success: true, message: 'Polling stopped' });
+  });
+
+  // Force restart polling (for manual recovery from Angular UI)
+  expressApp.post('/api/polling/restart', (req, res) => {
+    logMessage('INFO', 'Polling', 'Force restart requested via API');
+    stopBackendPolling();
+    setTimeout(() => {
+      startBackendPolling();
+      res.json({ success: true, message: 'Polling force-restarted' });
+    }, 1000);
   });
 
   // Printers endpoints
