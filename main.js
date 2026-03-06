@@ -6,6 +6,53 @@ const axios = require('axios');
 const AutoLaunch = require('auto-launch');
 const { autoUpdater } = require('electron-updater');
 require('dotenv').config();
+const fs = require('fs');
+
+// ============================================================
+// PERSISTENCE — survives app restart, cleared only on logout
+// ============================================================
+const PERSIST_FILE = path.join(app.getPath('userData'), 'shopbot-persist.json');
+
+function loadPersistedData() {
+  try {
+    if (fs.existsSync(PERSIST_FILE)) {
+      const raw = fs.readFileSync(PERSIST_FILE, 'utf8');
+      const data = JSON.parse(raw);
+      logMessage('INFO', 'Persistence', `Loaded persisted data from ${PERSIST_FILE}`);
+      return data;
+    }
+  } catch (err) {
+    safeLog(`⚠️ [PERSIST] Failed to load persisted data: ${err.message}`);
+  }
+  return null;
+}
+
+function savePersistedData() {
+  try {
+    const data = {
+      activeStoreId,
+      printers: printerStore.printers,
+      nextId: printerStore.nextId,
+      deviceId: config.deviceId,
+      savedAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(PERSIST_FILE, JSON.stringify(data, null, 2), 'utf8');
+    logMessage('DEBUG', 'Persistence', 'Data saved to disk');
+  } catch (err) {
+    safeLog(`⚠️ [PERSIST] Failed to save data: ${err.message}`);
+  }
+}
+
+function clearPersistedData() {
+  try {
+    if (fs.existsSync(PERSIST_FILE)) {
+      fs.unlinkSync(PERSIST_FILE);
+      logMessage('INFO', 'Persistence', 'Persisted data cleared (logout)');
+    }
+  } catch (err) {
+    safeLog(`⚠️ [PERSIST] Failed to clear data: ${err.message}`);
+  }
+}
 
 // Auto-launch on system startup
 const autoLauncher = new AutoLaunch({
@@ -27,7 +74,7 @@ const printerStore = {
   nextId: 1,
 };
 
-// Active store ID — set by Angular login, replaces hardcoded value
+// Active store ID — set by Angular login, persisted to disk
 let activeStoreId = null;
 
 // Configuration from .env
@@ -482,6 +529,15 @@ async function sendToUSBPrinter(data, printer) {
 
         if (err) {
           logMessage('ERROR', 'USBPrint', `❌ Transfer failed: ${err.message}`);
+          // On Windows, try native fallback if USB transfer fails
+          if (process.platform === 'win32') {
+            const winName = resolveWindowsPrinterName(printer);
+            if (winName) {
+              logMessage('INFO', 'USBPrint', `⚠️ Transfer failed, trying Windows-native print for "${winName}"...`);
+              sendToUSBPrinterWindows(data, { ...printer, windowsPrinterName: winName }).then(resolve);
+              return;
+            }
+          }
           resolve({ success: false, error: err.message });
         } else {
           logMessage('INFO', 'USBPrint', `📤 Data sent to ${printer.name}`);
@@ -489,7 +545,16 @@ async function sendToUSBPrinter(data, printer) {
         }
       });
     } catch (error) {
-      logMessage('ERROR', 'USBPrint', `USB printer error: ${printer.name}`, error.message);
+      logMessage('ERROR', 'USBPrint', `USB printer error (libusb): ${printer.name}`, error.message);
+      // On Windows, fallback to native printing via Windows spooler
+      if (process.platform === 'win32') {
+        const winName = resolveWindowsPrinterName(printer);
+        if (winName) {
+          logMessage('INFO', 'USBPrint', `⚠️ libusb failed, falling back to Windows-native print for "${winName}"...`);
+          sendToUSBPrinterWindows(data, { ...printer, windowsPrinterName: winName }).then(resolve);
+          return;
+        }
+      }
       resolve({ success: false, error: error.message });
     }
   });
@@ -791,9 +856,214 @@ function discoverUSBPrinters() {
     safeLog(`🎯 [USB DISCOVERY] Total printers found: ${usbPrinters.length}`);
     return usbPrinters;
   } catch (error) {
-    // Silently ignore USB errors - avoid EPIPE on broken pipes
+    // libusb failed — on Windows this is common (usbprint.sys blocks libusb access)
+    // Fall back to Windows-native printer discovery via PowerShell + WMI
+    if (process.platform === 'win32') {
+      safeLog(`⚠️ [USB DISCOVERY] libusb failed (${error.message}), trying Windows-native discovery...`);
+      return discoverUSBPrintersWindows();
+    }
+    // On other platforms, silently ignore (avoid EPIPE on broken pipes)
     return [];
   }
+}
+
+// ============================================================
+// WINDOWS-NATIVE USB PRINTING FALLBACK
+// When libusb fails on Windows (usbprint.sys blocks access),
+// these functions use PowerShell + WMI for discovery and
+// .NET RawPrinterHelper (winspool.Drv) for raw byte printing.
+// ============================================================
+
+/**
+ * Discover USB printers on Windows using WMI (fallback when libusb fails)
+ */
+function discoverUSBPrintersWindows() {
+  try {
+    const { execSync } = require('child_process');
+    safeLog('🔍 [USB DISCOVERY WIN] Using Windows-native printer discovery (PowerShell + WMI)...');
+
+    // Query WMI for any printer connected on a USB port
+    const psScript = "Get-WmiObject Win32_Printer | Where-Object { $_.PortName -match 'USB' } | Select-Object Name, PortName, DriverName, PrinterStatus | ConvertTo-Json -Compress";
+    const result = execSync(`powershell -NoProfile -Command "${psScript}"`, {
+      encoding: 'utf8',
+      timeout: 15000,
+      windowsHide: true,
+    }).trim();
+
+    if (!result) {
+      safeLog('⚠️ [USB DISCOVERY WIN] No Windows USB printers found via WMI');
+      return [];
+    }
+
+    let printers = JSON.parse(result);
+    if (!Array.isArray(printers)) printers = [printers]; // Single result comes as object
+
+    const usbPrinters = printers
+      .filter(p => p && p.Name)
+      .map((p, i) => ({
+        id: `usb-win-${i}-${Date.now()}`,
+        name: p.Name,
+        type: 'usb',
+        windowsPrinterName: p.Name,
+        portName: p.PortName || '',
+        driverName: p.DriverName || '',
+        vendorId: 0,
+        productId: 0,
+        busNumber: 0,
+        deviceAddress: i,
+        status: (p.PrinterStatus === 0 || p.PrinterStatus === 3) ? 'online' : 'offline',
+        lastChecked: new Date().toISOString(),
+      }));
+
+    safeLog(`🎯 [USB DISCOVERY WIN] Found ${usbPrinters.length} USB printer(s)`);
+    usbPrinters.forEach(p => safeLog(`  ✅ ${p.name} (Port: ${p.portName}, Driver: ${p.driverName})`));
+
+    return usbPrinters;
+  } catch (error) {
+    safeLog(`❌ [USB DISCOVERY WIN] Windows-native discovery also failed: ${error.message}`);
+    return [];
+  }
+}
+
+/**
+ * Send raw ESC/POS data to a USB printer on Windows via the print spooler.
+ * Uses PowerShell + .NET RawPrinterHelper (winspool.Drv P/Invoke) to bypass libusb.
+ * This is only called as a fallback when the normal libusb approach fails.
+ */
+function sendToUSBPrinterWindows(data, printer) {
+  return new Promise((resolve) => {
+    try {
+      const { exec } = require('child_process');
+      const fs = require('fs');
+      const os = require('os');
+      const pathModule = require('path');
+
+      const printerName = printer.windowsPrinterName || printer.name;
+      const bufData = Buffer.isBuffer(data) ? data : Buffer.from(data);
+
+      // Write raw ESC/POS data to a temp file
+      const tempFile = pathModule.join(os.tmpdir(), `shopbot-print-${Date.now()}.bin`);
+      fs.writeFileSync(tempFile, bufData);
+
+      logMessage('INFO', 'USBPrintWin', `📤 Windows fallback: Sending ${bufData.length} bytes to "${printerName}"...`);
+
+      // Write the PowerShell script to a temp .ps1 file to avoid escaping issues
+      const psScriptPath = pathModule.join(os.tmpdir(), `shopbot-rawprint-${Date.now()}.ps1`);
+      const psLines = [
+        `$PrinterName = '${printerName.replace(/'/g, "''")}';`,
+        `$FilePath = '${tempFile.replace(/\\/g, '\\\\').replace(/'/g, "''")}';`,
+        `$bytes = [System.IO.File]::ReadAllBytes($FilePath);`,
+        ``,
+        `Add-Type -TypeDefinition @"`,
+        `using System;`,
+        `using System.Runtime.InteropServices;`,
+        `public class RawPrinterHelper {`,
+        `    [StructLayout(LayoutKind.Sequential)]`,
+        `    public struct DOCINFOA {`,
+        `        [MarshalAs(UnmanagedType.LPStr)] public string pDocName;`,
+        `        [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;`,
+        `        [MarshalAs(UnmanagedType.LPStr)] public string pDataType;`,
+        `    }`,
+        `    [DllImport("winspool.Drv", EntryPoint="OpenPrinterA", SetLastError=true, CharSet=CharSet.Ansi, ExactSpelling=true)]`,
+        `    public static extern bool OpenPrinter(string szPrinter, out IntPtr hPrinter, IntPtr pd);`,
+        `    [DllImport("winspool.Drv", EntryPoint="ClosePrinter", SetLastError=true)]`,
+        `    public static extern bool ClosePrinter(IntPtr hPrinter);`,
+        `    [DllImport("winspool.Drv", EntryPoint="StartDocPrinterA", SetLastError=true, CharSet=CharSet.Ansi)]`,
+        `    public static extern bool StartDocPrinter(IntPtr hPrinter, int level, [In] ref DOCINFOA di);`,
+        `    [DllImport("winspool.Drv", EntryPoint="EndDocPrinter", SetLastError=true)]`,
+        `    public static extern bool EndDocPrinter(IntPtr hPrinter);`,
+        `    [DllImport("winspool.Drv", EntryPoint="StartPagePrinter", SetLastError=true)]`,
+        `    public static extern bool StartPagePrinter(IntPtr hPrinter);`,
+        `    [DllImport("winspool.Drv", EntryPoint="EndPagePrinter", SetLastError=true)]`,
+        `    public static extern bool EndPagePrinter(IntPtr hPrinter);`,
+        `    [DllImport("winspool.Drv", EntryPoint="WritePrinter", SetLastError=true)]`,
+        `    public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, int dwCount, out int dwWritten);`,
+        `    public static bool SendBytesToPrinter(string szPrinterName, byte[] data) {`,
+        `        IntPtr hPrinter;`,
+        `        DOCINFOA di = new DOCINFOA();`,
+        `        di.pDocName = "ShopBot Receipt";`,
+        `        di.pDataType = "RAW";`,
+        `        bool ok = false;`,
+        `        if (OpenPrinter(szPrinterName, out hPrinter, IntPtr.Zero)) {`,
+        `            if (StartDocPrinter(hPrinter, 1, ref di)) {`,
+        `                if (StartPagePrinter(hPrinter)) {`,
+        `                    IntPtr ptr = Marshal.AllocHGlobal(data.Length);`,
+        `                    Marshal.Copy(data, 0, ptr, data.Length);`,
+        `                    int written;`,
+        `                    ok = WritePrinter(hPrinter, ptr, data.Length, out written);`,
+        `                    Marshal.FreeHGlobal(ptr);`,
+        `                    EndPagePrinter(hPrinter);`,
+        `                }`,
+        `                EndDocPrinter(hPrinter);`,
+        `            }`,
+        `            ClosePrinter(hPrinter);`,
+        `        }`,
+        `        return ok;`,
+        `    }`,
+        `}`,
+        `"@`,
+        ``,
+        `$result = [RawPrinterHelper]::SendBytesToPrinter($PrinterName, $bytes);`,
+        `Remove-Item -Path $FilePath -Force -ErrorAction SilentlyContinue;`,
+        `Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue;`,
+        `if ($result) { Write-Output 'SUCCESS' } else { Write-Output 'FAILED' }`,
+      ];
+
+      fs.writeFileSync(psScriptPath, psLines.join('\n'), 'utf8');
+
+      exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psScriptPath}"`, {
+        timeout: 15000,
+        windowsHide: true,
+      }, (err, stdout, stderr) => {
+        // Cleanup temp files
+        try { fs.unlinkSync(tempFile); } catch {}
+        try { fs.unlinkSync(psScriptPath); } catch {}
+
+        if (err) {
+          logMessage('ERROR', 'USBPrintWin', `PowerShell print failed: ${err.message}`);
+          resolve({ success: false, error: `Windows spooler error: ${err.message}` });
+          return;
+        }
+
+        const output = (stdout || '').trim();
+        if (output.includes('SUCCESS')) {
+          logMessage('INFO', 'USBPrintWin', `✅ Printed to "${printerName}" via Windows spooler`);
+          resolve({ success: true });
+        } else {
+          logMessage('ERROR', 'USBPrintWin', `Windows print returned: ${output}. Stderr: ${stderr || 'none'}`);
+          resolve({ success: false, error: `Windows spooler: ${output || 'unknown error'}` });
+        }
+      });
+    } catch (error) {
+      logMessage('ERROR', 'USBPrintWin', `Windows print exception: ${error.message}`);
+      resolve({ success: false, error: error.message });
+    }
+  });
+}
+
+/**
+ * Resolve the Windows printer name for a USB printer on-the-fly.
+ * Called when libusb fails and we need the Windows spooler name.
+ */
+function resolveWindowsPrinterName(printer) {
+  if (printer.windowsPrinterName) return printer.windowsPrinterName;
+  if (process.platform !== 'win32') return null;
+
+  try {
+    const winPrinters = discoverUSBPrintersWindows();
+    if (winPrinters.length > 0) {
+      // Use the first Windows USB printer found
+      const winPrinter = winPrinters[0];
+      // Cache it on the printer object for future calls
+      printer.windowsPrinterName = winPrinter.windowsPrinterName;
+      printer.portName = winPrinter.portName;
+      safeLog(`🔗 [USB] Resolved Windows printer name: "${winPrinter.windowsPrinterName}" (port: ${winPrinter.portName})`);
+      return winPrinter.windowsPrinterName;
+    }
+  } catch (e) {
+    safeLog(`⚠️ [USB] Failed to resolve Windows printer name: ${e.message}`);
+  }
+  return null;
 }
 
 // Bluetooth discovery function using Noble
@@ -1195,6 +1465,7 @@ function startExpressServer() {
     }
     activeStoreId = storeId;
     logMessage('INFO', 'Config', `Store ID updated to: ${storeId}`);
+    savePersistedData(); // Persist to disk
 
     // Restart polling if already active so it picks up the new store ID
     if (pollingActive) {
@@ -1210,6 +1481,12 @@ function startExpressServer() {
   expressApp.delete('/api/config/store', (req, res) => {
     activeStoreId = null;
     logMessage('INFO', 'Config', 'Store ID cleared (logout)');
+    clearPersistedData(); // Remove persisted data from disk
+    // Clear in-memory printer data too
+    printerStore.printers = [];
+    printerStore.printLogs = [];
+    printerStore.queue = [];
+    printerStore.nextId = 1;
     stopBackendPolling();
     res.json({ success: true, message: 'Store configuration cleared' });
   });
@@ -1464,13 +1741,16 @@ function startExpressServer() {
     const usbPrinters = discoverUSBPrinters();
     
     // Add discovered printers to store if not already present
+    let added = 0;
     usbPrinters.forEach((usbPrinter) => {
       const exists = printerStore.printers.find((p) => p.id === usbPrinter.id);
       if (!exists) {
         printerStore.printers.push(usbPrinter);
         safeLog(`➡️ [USB] Added: ${usbPrinter.name}`);
+        added++;
       }
     });
+    if (added > 0) savePersistedData();
     
     res.json({ 
       success: true, 
@@ -1531,12 +1811,15 @@ function startExpressServer() {
         const allPrinters = [...printers, ...usbPrinters];
 
         // Add discovered printers to store
+        let added = 0;
         allPrinters.forEach((printer) => {
           const exists = printerStore.printers.find((p) => p.id === printer.id);
           if (!exists) {
             printerStore.printers.push(printer);
+            added++;
           }
         });
+        if (added > 0) savePersistedData();
 
         return res.json({
           success: true,
@@ -1672,6 +1955,7 @@ function startExpressServer() {
     };
 
     printerStore.printers.push(newPrinter);
+    savePersistedData();
     safeLog(`🔌 Bluetooth printer added: ${name} (${macAddress}:${channel})`);
     
     res.json({ 
@@ -1716,6 +2000,7 @@ function startExpressServer() {
     }
 
     printerStore.printers.push(newPrinter);
+    savePersistedData();
     safeLog(`${type === 'usb' ? '🔌' : '🞨'} Printer added:`, newPrinter);
     
     // Check status immediately for network printers
@@ -1729,6 +2014,7 @@ function startExpressServer() {
   expressApp.delete('/api/printers/:id', (req, res) => {
     const { id } = req.params;
     printerStore.printers = printerStore.printers.filter((p) => p.id !== id);
+    savePersistedData();
     res.json({ success: true });
   });
 
@@ -1958,11 +2244,49 @@ function startExpressServer() {
         }
       });
     } catch (error) {
+      safeLog(`❌ [USB PRINT] Exception on ${printer.name}: ${error.message}`);
+
+      // On Windows, try native fallback before giving up or retrying
+      if (process.platform === 'win32') {
+        const winName = resolveWindowsPrinterName(printer);
+        if (winName) {
+          safeLog(`⚠️ [USB PRINT] libusb failed, trying Windows-native print for "${winName}"...`);
+          sendToUSBPrinterWindows(job.data, { ...printer, windowsPrinterName: winName }).then((winResult) => {
+            if (winResult.success) {
+              job.status = 'success';
+              job.completedAt = new Date().toISOString();
+              printerStore.printLogs.push({
+                ...job,
+                action: 'completed',
+                printer: printer.name,
+                timestamp: new Date().toISOString(),
+              });
+              safeLog(`✅ [USB PRINT] Sent to ${printer.name} via Windows fallback`);
+            } else {
+              safeLog(`❌ [USB PRINT] Windows fallback also failed: ${winResult.error}`);
+              job.status = 'failed';
+              job.error = `libusb: ${error.message}, Windows: ${winResult.error}`;
+              job.attempts++;
+              if (job.attempts < job.maxAttempts) {
+                setTimeout(() => attemptUSBPrint(job, printer), 1000);
+              }
+            }
+          }).catch((winErr) => {
+            safeLog(`❌ [USB PRINT] Windows fallback exception: ${winErr.message}`);
+            job.status = 'failed';
+            job.error = error.message;
+            job.attempts++;
+            if (job.attempts < job.maxAttempts) {
+              setTimeout(() => attemptUSBPrint(job, printer), 1000);
+            }
+          });
+          return; // Don't execute normal failure path — Windows fallback handles it
+        }
+      }
+
       job.status = 'failed';
       job.error = error.message;
       job.attempts++;
-
-      safeLog(`❌ [USB PRINT] Exception on ${printer.name}: ${error.message}`);
 
       if (job.attempts < job.maxAttempts) {
         setTimeout(() => attemptUSBPrint(job, printer), 1000);
@@ -2435,9 +2759,28 @@ app.whenReady().then(async () => {
     }
   }
 
+  // Restore persisted data (storeId, printers) before starting services
+  const persisted = loadPersistedData();
+  if (persisted) {
+    if (persisted.activeStoreId) {
+      activeStoreId = persisted.activeStoreId;
+      logMessage('INFO', 'Startup', `Restored store ID: ${activeStoreId}`);
+    }
+    if (persisted.printers && persisted.printers.length > 0) {
+      printerStore.printers = persisted.printers;
+      logMessage('INFO', 'Startup', `Restored ${persisted.printers.length} printer(s)`);
+    }
+    if (persisted.nextId) {
+      printerStore.nextId = persisted.nextId;
+    }
+    if (persisted.deviceId) {
+      config.deviceId = persisted.deviceId;
+    }
+  }
+
   startExpressServer();
   startPrinterStatusCheck(); // Start periodic status checks
-  startBackendPolling(); // Start polling for backend jobs
+  startBackendPolling(); // Start polling for backend jobs (uses restored storeId)
   createWindow();
   setupAutoUpdater(); // Check for updates after window is created
 });
