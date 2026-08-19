@@ -88,7 +88,7 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
 // Configuration from .env (dev) or sensible production defaults
 const config = {
-  apiBaseUrl: process.env.API_BASE_URL || (isDev ? 'http://localhost:3000' : 'https://shopbot-server.herokuapp.com'),
+  apiBaseUrl: process.env.API_BASE_URL || (isDev ? 'http://localhost:3000' : 'https://shopbot-server-7d7f5c27c0b7.herokuapp.com'),
   branchId: process.env.BRANCH_ID || 'default-branch',
   deviceId: process.env.DEVICE_ID || `printer-${Date.now()}`,
   pollInterval: parseInt(process.env.POLL_INTERVAL) || 3000,
