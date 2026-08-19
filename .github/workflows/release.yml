@@ -23,12 +23,6 @@ jobs:
   release:
     runs-on: ${{ matrix.os }}
 
-    if: |
-      github.event_name == 'push' ||
-      github.event.inputs.platforms == 'both' ||
-      (github.event.inputs.platforms == 'macos' && matrix.os == 'macos-latest') ||
-      (github.event.inputs.platforms == 'windows' && matrix.os == 'windows-2022')
-
     strategy:
       fail-fast: false # Don't cancel other builds if one fails
       matrix:
@@ -45,11 +39,18 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
+        if: |
+          github.event_name == 'push' ||
+          github.event.inputs.platforms == 'both' ||
+          (github.event.inputs.platforms == 'macos' && matrix.os == 'macos-latest') ||
+          (github.event.inputs.platforms == 'windows' && matrix.os == 'windows-2022')
         run: npm ci
 
       # macOS: Build and publish
       - name: Build & Release (macOS)
-        if: matrix.os == 'macos-latest'
+        if: |
+          matrix.os == 'macos-latest' &&
+          (github.event_name == 'push' || github.event.inputs.platforms == 'both' || github.event.inputs.platforms == 'macos')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Skip code signing if no certificate is configured
@@ -58,7 +59,9 @@ jobs:
 
       # Windows: Build and publish
       - name: Build & Release (Windows)
-        if: matrix.os == 'windows-2022'
+        if: |
+          matrix.os == 'windows-2022' &&
+          (github.event_name == 'push' || github.event.inputs.platforms == 'both' || github.event.inputs.platforms == 'windows')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run release:win
