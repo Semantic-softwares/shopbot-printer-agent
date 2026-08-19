@@ -4,6 +4,17 @@ on:
   push:
     tags:
       - 'v*' # Trigger on version tags like v1.0.0, v1.2.3
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to build'
+        required: true
+        default: 'windows'
+        type: choice
+        options:
+          - both
+          - macos
+          - windows
 
 permissions:
   contents: write # Required for creating releases and uploading assets
@@ -11,12 +22,18 @@ permissions:
 jobs:
   release:
     runs-on: ${{ matrix.os }}
-    
+
+    if: |
+      github.event_name == 'push' ||
+      github.event.inputs.platforms == 'both' ||
+      (github.event.inputs.platforms == 'macos' && matrix.os == 'macos-latest') ||
+      (github.event.inputs.platforms == 'windows' && matrix.os == 'windows-2022')
+
     strategy:
       fail-fast: false # Don't cancel other builds if one fails
       matrix:
-        os: [macos-latest, windows-latest]
-    
+        os: [macos-latest, windows-2022] # windows-2022 pinned: windows-latest's newer MSVC toolset can't compile @abandonware/noble's WinRT binding
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -41,7 +58,7 @@ jobs:
 
       # Windows: Build and publish
       - name: Build & Release (Windows)
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-2022'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run release:win
