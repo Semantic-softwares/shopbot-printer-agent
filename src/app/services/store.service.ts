@@ -1,4 +1,4 @@
-import { Injectable, inject } from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
@@ -22,6 +22,12 @@ export class StoreService {
   private sessionStorage = inject(SessionStorageService);
   private apiUrl = environment.apiUrl;
 
+  /** Reactive signal mirroring the locally persisted store — components should
+   * read this instead of calling getStoreLocally() so they update live on
+   * login/logout instead of only on the next full app restart. */
+  private _currentStore = signal<Store | null>(this.sessionStorage.getStore<Store>());
+  readonly currentStore = this._currentStore.asReadonly();
+
   validateMerchantStoreAccess(
     storeNumber: string,
     merchantId: string
@@ -44,6 +50,7 @@ export class StoreService {
   // --- Local persistence ---
   saveStoreLocally(store: Store): void {
     this.sessionStorage.setStore(store);
+    this._currentStore.set(store);
   }
 
   getStoreLocally(): Store | null {
@@ -52,5 +59,6 @@ export class StoreService {
 
   removeStoreLocally(): void {
     this.sessionStorage.removeStore();
+    this._currentStore.set(null);
   }
 }

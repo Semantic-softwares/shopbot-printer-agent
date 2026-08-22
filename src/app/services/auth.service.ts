@@ -38,12 +38,19 @@ export class AuthService {
 
   login(email: string, password: string): Observable<AuthUser> {
     return this.http
-      .post<{ access_token: string; user: AuthUser }>(
+      .post<{ access_token: string; user: AuthUser; msg?: string; status?: number }>(
         `${this.apiUrl}/auth/login?user=merchant`,
         { email, password }
       )
       .pipe(
         map((response) => {
+          // The backend responds with HTTP 200/201 even for invalid credentials,
+          // embedding the real error in the JSON body (e.g. {msg, status: 401})
+          // instead of returning a proper 4xx. Detect that case explicitly —
+          // otherwise this silently "succeeds" with an undefined user/token.
+          if (!response?.access_token || !response?.user) {
+            throw new Error(response?.msg || 'Invalid email or password.');
+          }
           this.sessionStorage.setCurrentUser(response.user);
           this.sessionStorage.setAuthToken(response.access_token);
           this.currentUserSubject.next(response.user);
