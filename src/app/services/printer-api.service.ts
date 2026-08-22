@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, throwError } from 'rxjs';
 
 @Injectable({
   providedIn: 'root',
@@ -51,6 +51,20 @@ export class PrinterApiService {
 
   removePrinter(printerId: string): Observable<{ success: boolean }> {
     return this.http.delete<{ success: boolean }>(`${this.baseUrl}/printers/${printerId}`);
+  }
+
+  /** Routes a test request to the right endpoint based on the printer's connection type. */
+  testAnyPrinter(printer: any): Observable<{ success: boolean; message: string; jobId?: string }> {
+    switch (printer.type) {
+      case 'network':
+        return this.testPrinter(printer.ip, printer.port);
+      case 'usb':
+        return this.testUSBPrinter(printer.vendorId, printer.productId, printer.busNumber, printer.deviceAddress, printer.id);
+      case 'bluetooth':
+        return this.testBluetoothConnection(printer.macAddress, printer.channel);
+      default:
+        return throwError(() => new Error(`Unknown printer type: ${printer.type}`));
+    }
   }
 
   discoverPrinters(subnet: string): Observable<any[]> {

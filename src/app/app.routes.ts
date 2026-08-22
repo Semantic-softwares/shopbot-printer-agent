@@ -1,5 +1,5 @@
 import { Routes } from '@angular/router';
-import { authGuard } from './guards/auth.guard';
+import { authGuard } from './shared/guards/auth.guard';
 
 export const routes: Routes = [
   {
@@ -9,53 +9,15 @@ export const routes: Routes = [
   },
   {
     path: 'login',
-    loadComponent: () =>
-      import('./pages/login/login.component').then(
-        (m) => m.LoginComponent
-      ),
+    loadChildren: () =>
+      import('./login/login.routes').then((m) => m.LOGIN_ROUTES),
   },
   {
     path: 'dashboard',
     canActivate: [authGuard],
     loadComponent: () =>
-      import('./pages/dashboard/dashboard.component').then(
-        (m) => m.DashboardComponent
-      ),
-  },
-  {
-    path: 'printers',
-    canActivate: [authGuard],
-    children: [
-      {
-        path: '',
-        loadComponent: () =>
-          import('./pages/printers/list-printers/list-printers.component').then(
-            (m) => m.ListPrintersComponent
-          ),
-      },
-      {
-        path: 'add-printer',
-        loadComponent: () =>
-          import('./pages/printers/add-printers/add-printers.component').then(
-            (m) => m.AddPrintersComponent
-          ),
-      },
-    ],
-  },
-  {
-    path: 'logs',
-    canActivate: [authGuard],
-    loadComponent: () =>
-      import('./pages/logs/logs.component').then(
-        (m) => m.LogsComponent
-      ),
-  },
-  {
-    path: 'settings',
-    canActivate: [authGuard],
-    loadComponent: () =>
-      import('./pages/settings/settings.component').then(
-        (m) => m.SettingsComponent
-      ),
+      import('./shell/shell.component').then((m) => m.ShellComponent),
+    loadChildren: () =>
+      import('./shell/shell.routes').then((m) => m.SHELL_ROUTES),
   },
 ];

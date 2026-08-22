@@ -1,0 +1,91 @@
+<!-- Header -->
+<div class="flex items-center gap-4 mb-6">
+  <button (click)="goBack()"
+          class="p-2 rounded-lg text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-700 hover:text-gray-700 dark:hover:text-white transition-colors">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+    </svg>
+  </button>
+  <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Printer Details</h1>
+</div>
+
+@if (isLoading()) {
+  <div class="flex flex-col items-center justify-center py-24 gap-4">
+    <app-loading-spinner size="lg" />
+  </div>
+} @else if (!printer()) {
+  <div class="flex flex-col items-center justify-center py-24 gap-4">
+    <span class="text-4xl">❓</span>
+    <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Printer not found</h2>
+    <button (click)="goBack()"
+            class="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors">
+      ← Back to Printers
+    </button>
+  </div>
+} @else {
+  <div class="max-w-2xl">
+    <div class="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 shadow-sm">
+      <!-- Header -->
+      <div class="flex items-start gap-4 p-6 border-b border-gray-100 dark:border-slate-700">
+        <span class="text-4xl leading-none">{{ icon() }}</span>
+        <div class="flex-1 min-w-0">
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white truncate">{{ printer().name }}</h2>
+          <span class="inline-block mt-1 text-xs font-medium uppercase tracking-wider text-gray-400 dark:text-slate-500">{{ typeName() }}</span>
+        </div>
+      </div>
+
+      <p class="px-6 pt-4 text-xs text-gray-500 dark:text-slate-400">
+        Every field below is copyable — use these values wherever this printer needs to be registered elsewhere.
+      </p>
+
+      <!-- Copyable Details -->
+      <div class="mx-6 mt-3 mb-2 divide-y divide-gray-200 dark:divide-slate-600 rounded-lg border border-gray-200 dark:border-slate-600 overflow-hidden">
+        <app-copy-field label="Printer ID" [value]="printer().id + ''" />
+
+        @if (isNetwork()) {
+          <app-copy-field label="IP Address" [value]="printer().ip" />
+          <app-copy-field label="Port" [value]="printer().port + ''" />
+        }
+
+        @if (isUSB()) {
+          <app-copy-field
+            label="Vendor ID"
+            [value]="printer().vendorId + ''"
+            [displayValue]="printer().vendorId + ' (' + formatHex(printer().vendorId) + ')'" />
+          <app-copy-field
+            label="Product ID"
+            [value]="printer().productId + ''"
+            [displayValue]="printer().productId + ' (' + formatHex(printer().productId) + ')'" />
+          <app-copy-field label="Device Name" [value]="printer().vendorId + ':' + printer().productId" />
+          @if (printer().busNumber !== undefined) {
+            <app-copy-field label="Bus Number" [value]="printer().busNumber + ''" />
+          }
+          @if (printer().deviceAddress !== undefined) {
+            <app-copy-field label="Device Address" [value]="printer().deviceAddress + ''" />
+          }
+        }
+
+        @if (isBluetooth()) {
+          <app-copy-field label="MAC Address" [value]="printer().macAddress" />
+          <app-copy-field label="RFCOMM Channel" [value]="printer().channel + ''" />
+        }
+
+        @if (printer().createdAt) {
+          <app-copy-field label="Added" [value]="formatTime(printer().createdAt)" />
+        }
+      </div>
+
+      <!-- Actions -->
+      <div class="flex justify-end gap-2 px-6 py-4">
+        <button (click)="testPrinter()"
+                class="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors">
+          ✅ Test Printer
+        </button>
+        <button (click)="removePrinter()"
+                class="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors">
+          🗑️ Remove Printer
+        </button>
+      </div>
+    </div>
+  </div>
+}
