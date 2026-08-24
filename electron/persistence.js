@@ -24,6 +24,7 @@ function savePersistedData() {
   try {
     const data = {
       activeStoreId: state.activeStoreId,
+      deviceToken: state.deviceToken,
       printers: state.printerStore.printers,
       nextId: state.printerStore.nextId,
       deviceId: state.config.deviceId,

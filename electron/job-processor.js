@@ -2,31 +2,7 @@ const axios = require('axios');
 const state = require('./state');
 const { logMessage } = require('./logger');
 const { sendToPrinterDevice } = require('./printers/dispatch');
-
-/** Parse receipt payload from Base64 or hex. */
-function parseReceiptPayload(receipt) {
-  try {
-    // If it's base64, decode it
-    if (/^[A-Za-z0-9+/=]+$/.test(receipt)) {
-      try {
-        return Buffer.from(receipt, 'base64');
-      } catch {
-        // Not valid base64
-      }
-    }
-
-    // If it's hex string, convert to buffer
-    if (/^[0-9A-Fa-f]*$/.test(receipt)) {
-      return Buffer.from(receipt, 'hex');
-    }
-
-    // Assume it's a string payload
-    return Buffer.from(receipt, 'utf8');
-  } catch (error) {
-    logMessage('ERROR', 'PayloadParser', 'Error parsing receipt payload', error.message);
-    return null;
-  }
-}
+const { composeReceipt } = require('./receipt-composer');
 
 /** Lock job on backend (atomic operation). */
 async function lockBackendJob(jobId) {
@@ -220,26 +196,20 @@ async function processBackendJob(job) {
     logEntry.printerId = printer.id || printer.name;
     logEntry.printerName = printer.name;
 
-    // Step 3: Parse ESC/POS payload
-    if (!job.receipt) {
-      logMessage('ERROR', 'JobProcessor', `No receipt data in job`);
-      await failBackendJob(job._id, 'No receipt data provided');
+    // Step 3: Compose ESC/POS bytes locally from the job's raw items/settings —
+    // the backend no longer pre-renders and sends `job.receipt.data`.
+    let payload;
+    try {
+      payload = composeReceipt(job);
+    } catch (composeError) {
+      logMessage('ERROR', 'JobProcessor', `Failed to compose receipt: ${composeError.message}`);
+      await failBackendJob(job._id, `Failed to compose receipt: ${composeError.message}`);
       logEntry.status = 'failed';
-      logEntry.error = 'No receipt data provided';
+      logEntry.error = `Failed to compose receipt: ${composeError.message}`;
       return;
     }
 
-    logMessage('DEBUG', 'JobProcessor', `Parsing receipt payload (${typeof job.receipt.data})`);
-    const payload = parseReceiptPayload(job.receipt.data || job.receipt);
-    if (!payload) {
-      logMessage('ERROR', 'JobProcessor', `Failed to parse receipt payload`);
-      await failBackendJob(job._id, 'Failed to parse receipt payload');
-      logEntry.status = 'failed';
-      logEntry.error = 'Failed to parse receipt payload';
-      return;
-    }
-
-    logMessage('DEBUG', 'JobProcessor', `✅ Receipt parsed: ${payload.length} bytes`);
+    logMessage('DEBUG', 'JobProcessor', `✅ Receipt composed: ${payload.length} bytes`);
 
     // Step 4: Send to printer
     logMessage('INFO', 'JobProcessor', `📤 Sending to printer: ${printer.name}...`);
@@ -280,7 +250,6 @@ async function processBackendJob(job) {
 module.exports = {
   processBackendJob,
   matchLocalPrinter,
-  parseReceiptPayload,
   lockBackendJob,
   completeBackendJob,
   failBackendJob,

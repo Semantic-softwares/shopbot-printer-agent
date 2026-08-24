@@ -4,7 +4,7 @@ const net = require('net');
 const state = require('./state');
 const { safeLog, logMessage } = require('./logger');
 const { savePersistedData, clearPersistedData } = require('./persistence');
-const { startBackendPolling, stopBackendPolling } = require('./polling-service');
+const { connectSocket, stopSocketService } = require('./socket-service');
 const { checkPrinterStatus } = require('./printers/network');
 const { discoverUSBPrinters } = require('./printers/usb');
 const { discoverBluetoothPrinters, getBluetoothDeviceChannel, testBluetoothConnection } = require('./printers/bluetooth');
@@ -22,18 +22,20 @@ function startExpressServer() {
     res.json({ status: 'ok' });
   });
 
-  // Polling status (includes health info)
+  // Connection status (includes health info). Field names kept stable
+  // (pollingActive, consecutiveFailures, lastSuccessfulPoll, ...) since the
+  // Angular dashboard/logs pages already read them — they now describe the
+  // push-delivery socket's health instead of a poll loop's.
   expressApp.get('/api/polling/status', (req, res) => {
-    const silenceMs = Date.now() - state.lastSuccessfulPoll;
+    const silenceMs = Date.now() - state.lastSocketEventAt;
     let health = 'healthy';
-    if (!state.pollingActive) health = 'stopped';
-    else if (state.consecutiveFailures >= state.MAX_CONSECUTIVE_FAILURES) health = 'critical';
+    if (!state.socketConnected) health = 'stopped';
     else if (state.consecutiveFailures >= 3) health = 'degraded';
-    else if (silenceMs > state.MAX_POLL_SILENCE_MS) health = 'stale';
+    else if (silenceMs > 5 * 60 * 1000) health = 'stale';
 
     res.json({
-      pollingActive: state.pollingActive,
-      pollInterval: state.config.pollInterval,
+      pollingActive: state.socketConnected,
+      socketConnected: state.socketConnected,
       apiBaseUrl: state.config.apiBaseUrl,
       storeId: state.activeStoreId || 'not-configured',
       deviceId: state.config.deviceId,
@@ -42,30 +44,35 @@ function startExpressServer() {
       health,
       consecutiveFailures: state.consecutiveFailures,
       lastSuccessfulPoll: new Date(state.lastSuccessfulPoll).toISOString(),
+      lastSocketEventAt: new Date(state.lastSocketEventAt).toISOString(),
       silenceMs,
       uptime: process.uptime(),
     });
   });
 
-  // Configure store ID (called from Angular after login)
+  // Configure store ID + device token (called from Angular after login). The
+  // device token is minted server-side (POST /print-jobs/device-token, using the
+  // staff JWT the Angular renderer already has) and handed to this Express
+  // process, which has no JWT of its own — same handoff pattern as storeId.
   expressApp.post('/api/config/store', (req, res) => {
-    const { storeId } = req.body;
+    const { storeId, deviceToken } = req.body;
     if (!storeId) {
       return res.status(400).json({ success: false, message: 'storeId is required' });
     }
     state.activeStoreId = storeId;
+    if (deviceToken) {
+      state.deviceToken = deviceToken;
+    }
     logMessage('INFO', 'Config', `Store ID updated to: ${storeId}`);
     savePersistedData(); // Persist to disk
 
-    // Always (re)start polling with the new store ID. stopBackendPolling() is a
-    // safe no-op when not running; startBackendPolling() only starts when
-    // pollingActive is false, so calling both unconditionally — rather than
-    // only when pollingActive was already true — ensures a login that follows
-    // a prior logout (which stops polling) actually resumes it instead of
-    // leaving the app stuck in a stopped state until a full restart.
-    stopBackendPolling();
-    startBackendPolling();
-    logMessage('INFO', 'Config', 'Polling (re)started with new store ID');
+    // Always (re)connect with the new store/token. stopSocketService() is a safe
+    // no-op when not connected — calling both unconditionally, rather than only
+    // when already connected, ensures a login that follows a prior logout (which
+    // disconnects) actually reconnects instead of staying stuck until a restart.
+    stopSocketService();
+    connectSocket();
+    logMessage('INFO', 'Config', 'Push connection (re)started with new store ID');
 
     res.json({ success: true, message: 'Store ID configured', storeId });
   });
@@ -73,6 +80,7 @@ function startExpressServer() {
   // Clear store config (called on logout)
   expressApp.delete('/api/config/store', (req, res) => {
     state.activeStoreId = null;
+    state.deviceToken = null;
     logMessage('INFO', 'Config', 'Store ID cleared (logout)');
     clearPersistedData(); // Remove persisted data from disk
     // Clear in-memory printer data too
@@ -80,8 +88,15 @@ function startExpressServer() {
     state.printerStore.printLogs = [];
     state.printerStore.queue = [];
     state.printerStore.nextId = 1;
-    stopBackendPolling();
+    stopSocketService();
     res.json({ success: true, message: 'Store configuration cleared' });
+  });
+
+  // The Angular renderer needs this to mint a device-scoped socket token
+  // (POST /print-jobs/device-token on the backend) — deviceId otherwise only
+  // exists here in the Electron main process.
+  expressApp.get('/api/config/device-id', (req, res) => {
+    res.json({ deviceId: state.config.deviceId });
   });
 
   // Auto-launch status
@@ -111,25 +126,25 @@ function startExpressServer() {
     }
   });
 
-  // Start polling
+  // Start push connection
   expressApp.post('/api/polling/start', (req, res) => {
-    startBackendPolling();
-    res.json({ success: true, message: 'Polling started' });
+    connectSocket();
+    res.json({ success: true, message: 'Push connection started' });
   });
 
-  // Stop polling
+  // Stop push connection
   expressApp.post('/api/polling/stop', (req, res) => {
-    stopBackendPolling();
-    res.json({ success: true, message: 'Polling stopped' });
+    stopSocketService();
+    res.json({ success: true, message: 'Push connection stopped' });
   });
 
-  // Force restart polling (for manual recovery from Angular UI)
+  // Force reconnect (for manual recovery from Angular UI)
   expressApp.post('/api/polling/restart', (req, res) => {
-    logMessage('INFO', 'Polling', 'Force restart requested via API');
-    stopBackendPolling();
+    logMessage('INFO', 'SocketService', 'Force reconnect requested via API');
+    stopSocketService();
     setTimeout(() => {
-      startBackendPolling();
-      res.json({ success: true, message: 'Polling force-restarted' });
+      connectSocket();
+      res.json({ success: true, message: 'Push connection force-reconnected' });
     }, 1000);
   });
 
