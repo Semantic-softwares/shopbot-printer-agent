@@ -1,7 +1,32 @@
 const axios = require('axios');
 const state = require('./state');
 const { logMessage } = require('./logger');
-const { processBackendJob } = require('./job-processor');
+const { processBackendJob, matchLocalPrinter } = require('./job-processor');
+
+/**
+ * Process a batch of jobs grouped by their matched local printer: different
+ * printers run concurrently instead of waiting behind each other, while jobs
+ * headed to the SAME printer stay sequential (avoids interleaving raw bytes on
+ * one physical device). A job with no local match gets its own group so it fails
+ * out on its own instead of blocking, or being blocked by, anything else.
+ */
+async function processJobsGroupedByPrinter(jobs) {
+  const groups = new Map();
+  for (const job of jobs) {
+    const printer = matchLocalPrinter(job);
+    const key = printer ? `${printer.type}:${printer.id || printer.name}` : `unmatched:${job._id}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(job);
+  }
+
+  await Promise.all(
+    Array.from(groups.values()).map(async (groupJobs) => {
+      for (const job of groupJobs) {
+        await processBackendJob(job);
+      }
+    })
+  );
+}
 
 /** Poll backend for pending print jobs (single cycle with timeout protection). */
 async function pollPrintJobs() {
@@ -46,10 +71,7 @@ async function pollPrintJobs() {
     if (response.data.success && response.data.data.length > 0) {
       logMessage('INFO', 'PollingService', `Found ${response.data.data.length} pending job(s)`);
 
-      // Process each job sequentially
-      for (const job of response.data.data) {
-        await processBackendJob(job);
-      }
+      await processJobsGroupedByPrinter(response.data.data);
     } else {
       logMessage('DEBUG', 'PollingService', 'No pending jobs');
     }

@@ -118,6 +118,45 @@ async function failBackendJob(jobId, errorMessage) {
   }
 }
 
+/**
+ * Match a job to a locally-registered printer using its printerDetails, without any
+ * side effects (no locking, no logging to the UI). Pulled out of processBackendJob so
+ * polling-service.js can group a batch of jobs by printer before processing — jobs to
+ * different printers can then run concurrently instead of strictly one at a time.
+ */
+function matchLocalPrinter(job) {
+  const pd = job.printerDetails;
+  let printer = null;
+
+  // Strategy 1: Match by connection details from printerDetails (most reliable)
+  if (pd && pd.connection) {
+    const connType = pd.connectionType || '';
+
+    if ((connType === 'usb-raw' || connType === 'usb') && pd.connection.vendorId && pd.connection.productId) {
+      printer = state.printerStore.printers.find(
+        (p) => p.type === 'usb' && p.vendorId === pd.connection.vendorId && p.productId === pd.connection.productId
+      );
+    } else if (connType === 'bluetooth' && pd.connection.macAddress) {
+      printer = state.printerStore.printers.find(
+        (p) => p.type === 'bluetooth' && p.macAddress === pd.connection.macAddress
+      );
+    } else if (pd.connection.ip) {
+      printer = state.printerStore.printers.find(
+        (p) => p.type === 'network' && p.ip === pd.connection.ip
+      );
+    }
+  }
+
+  // Strategy 2: Match by printer name as fallback
+  if (!printer && pd && pd.name) {
+    printer = state.printerStore.printers.find(
+      (p) => p.name.toLowerCase() === pd.name.toLowerCase()
+    );
+  }
+
+  return printer || null;
+}
+
 /** Process a single job from backend: lock, match printer, parse payload, send, complete/fail. */
 async function processBackendJob(job) {
   logMessage('INFO', 'JobProcessor', `Processing job: ${job._id} (Type: ${job.type}, Order: ${job.orderMetadata?.reference || job._id})`);
@@ -157,48 +196,10 @@ async function processBackendJob(job) {
     logMessage('DEBUG', 'JobProcessor', `Looking for printer. Available printers: ${state.printerStore.printers.length}`);
     logMessage('DEBUG', 'JobProcessor', `Job type: ${job.type}, Printer details: ${JSON.stringify(job.printerDetails || {})}`);
 
-    let printer = null;
     const pd = job.printerDetails;
-
-    // Strategy 1: Match by connection details from printerDetails (most reliable)
-    if (pd && pd.connection) {
-      const connType = pd.connectionType || '';
-
-      if ((connType === 'usb-raw' || connType === 'usb') && pd.connection.vendorId && pd.connection.productId) {
-        // Match USB printer by vendorId + productId
-        printer = state.printerStore.printers.find(
-          (p) => p.type === 'usb' && p.vendorId === pd.connection.vendorId && p.productId === pd.connection.productId
-        );
-        if (printer) {
-          logMessage('DEBUG', 'JobProcessor', `Matched USB printer by VID/PID: ${printer.name}`);
-        }
-      } else if (connType === 'bluetooth' && pd.connection.macAddress) {
-        // Match Bluetooth printer by macAddress
-        printer = state.printerStore.printers.find(
-          (p) => p.type === 'bluetooth' && p.macAddress === pd.connection.macAddress
-        );
-        if (printer) {
-          logMessage('DEBUG', 'JobProcessor', `Matched Bluetooth printer by MAC: ${printer.name}`);
-        }
-      } else if (pd.connection.ip) {
-        // Match network printer by IP
-        printer = state.printerStore.printers.find(
-          (p) => p.type === 'network' && p.ip === pd.connection.ip
-        );
-        if (printer) {
-          logMessage('DEBUG', 'JobProcessor', `Matched network printer by IP: ${printer.name}`);
-        }
-      }
-    }
-
-    // Strategy 2: Match by printer name as fallback
-    if (!printer && pd && pd.name) {
-      printer = state.printerStore.printers.find(
-        (p) => p.name.toLowerCase() === pd.name.toLowerCase()
-      );
-      if (printer) {
-        logMessage('DEBUG', 'JobProcessor', `Matched printer by name: ${printer.name}`);
-      }
+    const printer = matchLocalPrinter(job);
+    if (printer) {
+      logMessage('DEBUG', 'JobProcessor', `Matched printer: ${printer.name} (${printer.type})`);
     }
 
     // NO fallback to random printers — each job must go to its designated printer
@@ -278,6 +279,7 @@ async function processBackendJob(job) {
 
 module.exports = {
   processBackendJob,
+  matchLocalPrinter,
   parseReceiptPayload,
   lockBackendJob,
   completeBackendJob,
