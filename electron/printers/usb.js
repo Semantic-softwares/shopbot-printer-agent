@@ -1,20 +1,46 @@
 const { safeLog, logMessage } = require('../logger');
 
-/** Send to USB printer via libusb (macOS/Linux, and Windows when usbprint.sys allows it). */
+/**
+ * Send to USB printer via libusb (macOS/Linux, and Windows when usbprint.sys allows it).
+ * Wrapped in an outer timeout (sendToUSBPrinterInternal has its own endpoint-level
+ * timeout too) because a stuck transfer here used to hang the promise forever,
+ * which wedged the entire polling loop until the app was manually restarted.
+ */
 async function sendToUSBPrinter(data, printer) {
+  return Promise.race([
+    sendToUSBPrinterInternal(data, printer),
+    new Promise((resolve) =>
+      setTimeout(
+        () => resolve({ success: false, error: 'USB send timed out after 18s' }),
+        18000
+      )
+    ),
+  ]);
+}
+
+function sendToUSBPrinterInternal(data, printer) {
   return new Promise((resolve) => {
     try {
       const usb = require('usb');
 
       logMessage('DEBUG', 'USBPrint', `🔌 Finding USB device: VID=0x${printer.vendorId.toString(16).toUpperCase()} PID=0x${printer.productId.toString(16).toUpperCase()}`);
 
-      const device = usb.getDeviceList().find(
+      // Match live devices by vendorId+productId — the same criteria job-processor.js
+      // already used to pick this printer. busNumber/deviceAddress are OS-assigned and
+      // drift on every unplug/replug, so they're only used as a tiebreaker below when
+      // more than one identical model is attached, not as a required match — otherwise
+      // a printer that's actually connected fine gets reported "not found".
+      const candidates = usb.getDeviceList().filter(
         (d) =>
           d.deviceDescriptor.idVendor === printer.vendorId &&
-          d.deviceDescriptor.idProduct === printer.productId &&
-          d.busNumber === printer.busNumber &&
-          d.deviceAddress === printer.deviceAddress
+          d.deviceDescriptor.idProduct === printer.productId
       );
+      const device =
+        candidates.length <= 1
+          ? candidates[0]
+          : candidates.find(
+              (d) => d.busNumber === printer.busNumber && d.deviceAddress === printer.deviceAddress
+            ) || candidates[0];
 
       if (!device) {
         logMessage('ERROR', 'USBPrint', `❌ USB device not found: ${printer.name}`);
@@ -44,6 +70,11 @@ async function sendToUSBPrinter(data, printer) {
       }
 
       logMessage('DEBUG', 'USBPrint', `✅ OUT endpoint found, transferring ${data.length} bytes...`);
+
+      // Without this, a stuck printer (out of paper, powered off mid-transfer) leaves
+      // this transfer callback pending forever — libusb's default endpoint timeout is
+      // 0 (infinite). 15s bounds it so the promise always settles.
+      outEndpoint.timeout = 15000;
 
       outEndpoint.transfer(data, (err) => {
         try {

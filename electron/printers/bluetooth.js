@@ -3,8 +3,25 @@ const { safeLog, logMessage } = require('../logger');
 /**
  * Send ESC/POS data to Bluetooth printer via Noble BLE.
  * Used by the polling system for backend print jobs.
+ *
+ * Wrapped in an outer timeout: only the initial scan (below) has one of its own —
+ * connect(), discoverAllServicesAndCharacteristics(), subscribe(), and each chunked
+ * write() have none, so a dropped BLE link or an out-of-range printer used to hang
+ * this promise forever, wedging the whole polling queue behind it.
  */
 async function sendToBluetoothPrinterDirect(data, printer) {
+  return Promise.race([
+    sendToBluetoothPrinterDirectInternal(data, printer),
+    new Promise((resolve) =>
+      setTimeout(
+        () => resolve({ success: false, error: 'Bluetooth send timed out after 20s' }),
+        20000
+      )
+    ),
+  ]);
+}
+
+function sendToBluetoothPrinterDirectInternal(data, printer) {
   return new Promise((resolve) => {
     let noble;
     try {
