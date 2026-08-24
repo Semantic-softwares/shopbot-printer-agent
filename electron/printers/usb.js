@@ -1,12 +1,18 @@
 const { safeLog, logMessage } = require('../logger');
 
 /**
- * Send to USB printer via libusb (macOS/Linux, and Windows when usbprint.sys allows it).
- * Wrapped in an outer timeout (sendToUSBPrinterInternal has its own endpoint-level
- * timeout too) because a stuck transfer here used to hang the promise forever,
- * which wedged the entire polling loop until the app was manually restarted.
+ * Send to a USB printer, routed by platform. Windows never attempts libusb —
+ * usbprint.sys already owns the device once it's installed as a Windows printer,
+ * so claiming the interface fails with LIBUSB_ERROR_NOT_SUPPORTED even though the
+ * printer itself is fine. macOS/Linux keep the direct libusb path.
  */
 async function sendToUSBPrinter(data, printer) {
+  if (process.platform === 'win32') {
+    return sendToUSBPrinterViaSpooler(data, printer);
+  }
+  // Wrapped in an outer timeout (sendToUSBPrinterInternal has its own endpoint-level
+  // timeout too) because a stuck transfer here used to hang the promise forever,
+  // which wedged the entire polling loop until the app was manually restarted.
   return Promise.race([
     sendToUSBPrinterInternal(data, printer),
     new Promise((resolve) =>
@@ -18,6 +24,7 @@ async function sendToUSBPrinter(data, printer) {
   ]);
 }
 
+/** macOS/Linux: direct libusb open → claim → transfer. */
 function sendToUSBPrinterInternal(data, printer) {
   return new Promise((resolve) => {
     try {
@@ -84,15 +91,6 @@ function sendToUSBPrinterInternal(data, printer) {
 
         if (err) {
           logMessage('ERROR', 'USBPrint', `❌ Transfer failed: ${err.message}`);
-          // On Windows, try native fallback if USB transfer fails
-          if (process.platform === 'win32') {
-            const winName = resolveWindowsPrinterName(printer);
-            if (winName) {
-              logMessage('INFO', 'USBPrint', `⚠️ Transfer failed, trying Windows-native print for "${winName}"...`);
-              sendToUSBPrinterWindows(data, { ...printer, windowsPrinterName: winName }).then(resolve);
-              return;
-            }
-          }
           resolve({ success: false, error: err.message });
         } else {
           logMessage('INFO', 'USBPrint', `📤 Data sent to ${printer.name}`);
@@ -101,15 +99,6 @@ function sendToUSBPrinterInternal(data, printer) {
       });
     } catch (error) {
       logMessage('ERROR', 'USBPrint', `USB printer error (libusb): ${printer.name}`, error.message);
-      // On Windows, fallback to native printing via Windows spooler
-      if (process.platform === 'win32') {
-        const winName = resolveWindowsPrinterName(printer);
-        if (winName) {
-          logMessage('INFO', 'USBPrint', `⚠️ libusb failed, falling back to Windows-native print for "${winName}"...`);
-          sendToUSBPrinterWindows(data, { ...printer, windowsPrinterName: winName }).then(resolve);
-          return;
-        }
-      }
       resolve({ success: false, error: error.message });
     }
   });
@@ -186,20 +175,25 @@ function discoverUSBPrinters() {
 }
 
 // ============================================================
-// WINDOWS-NATIVE USB PRINTING FALLBACK
-// When libusb fails on Windows (usbprint.sys blocks access),
-// these functions use PowerShell + WMI for discovery and
-// .NET RawPrinterHelper (winspool.Drv) for raw byte printing.
+// WINDOWS: PRINT SPOOLER (RAW ESC/POS via winspool.Drv)
+// Windows owns USB thermal printers through its own print subsystem the
+// moment a driver is installed, so libusb can enumerate the device but can
+// never claim its interface. These functions discover printers through the
+// Windows printer subsystem (WMI) and send raw bytes through the spooler
+// instead — the native, supported way to reach a USB printer on Windows.
 // ============================================================
 
-/** Discover USB printers on Windows using WMI (fallback when libusb fails). */
+/** Discover locally-attached Windows printers via WMI (not network-shared ones). */
 function discoverUSBPrintersWindows() {
   try {
     const { execSync } = require('child_process');
     safeLog('🔍 [USB DISCOVERY WIN] Using Windows-native printer discovery (PowerShell + WMI)...');
 
-    // Query WMI for any printer connected on a USB port
-    const psScript = "Get-WmiObject Win32_Printer | Where-Object { $_.PortName -match 'USB' } | Select-Object Name, PortName, DriverName, PrinterStatus | ConvertTo-Json -Compress";
+    // `Network = $false` is the robust way to scope this to locally-attached
+    // printers — unlike a `PortName -match 'USB'` filter, it doesn't depend on
+    // a particular driver's virtual port naming (many thermal-printer drivers,
+    // e.g. Epson ESD/POS, use ports like "ESDPRT001" that don't contain "USB").
+    const psScript = "Get-WmiObject Win32_Printer | Where-Object { -not $_.Network } | Select-Object Name, PortName, DriverName, PrinterStatus | ConvertTo-Json -Compress";
     const result = execSync(`powershell -NoProfile -Command "${psScript}"`, {
       encoding: 'utf8',
       timeout: 15000,
@@ -207,7 +201,7 @@ function discoverUSBPrintersWindows() {
     }).trim();
 
     if (!result) {
-      safeLog('⚠️ [USB DISCOVERY WIN] No Windows USB printers found via WMI');
+      safeLog('⚠️ [USB DISCOVERY WIN] No local Windows printers found via WMI');
       return [];
     }
 
@@ -231,20 +225,80 @@ function discoverUSBPrintersWindows() {
         lastChecked: new Date().toISOString(),
       }));
 
-    safeLog(`🎯 [USB DISCOVERY WIN] Found ${usbPrinters.length} USB printer(s)`);
+    safeLog(`🎯 [USB DISCOVERY WIN] Found ${usbPrinters.length} local printer(s)`);
     usbPrinters.forEach(p => safeLog(`  ✅ ${p.name} (Port: ${p.portName}, Driver: ${p.driverName})`));
 
     return usbPrinters;
   } catch (error) {
-    safeLog(`❌ [USB DISCOVERY WIN] Windows-native discovery also failed: ${error.message}`);
+    safeLog(`❌ [USB DISCOVERY WIN] Windows-native discovery failed: ${error.message}`);
     return [];
   }
 }
 
 /**
+ * Send data to a Windows USB printer, resolving its spooler identity first.
+ * Never touches libusb. If the stored printer record already has a
+ * `windowsPrinterName` (captured at registration time), it's used directly —
+ * no rediscovery. Otherwise this does a one-time bounded backfill: if exactly
+ * one local Windows printer is present, adopt and persist its identity onto
+ * the printer record; if zero or more than one are present, fail with a
+ * clear diagnostic rather than guessing which physical printer to use.
+ */
+async function sendToUSBPrinterViaSpooler(data, printer) {
+  return Promise.race([
+    sendToUSBPrinterViaSpoolerInternal(data, printer),
+    new Promise((resolve) =>
+      setTimeout(
+        () => resolve({ success: false, error: 'Windows spooler send timed out after 20s' }),
+        20000
+      )
+    ),
+  ]);
+}
+
+async function sendToUSBPrinterViaSpoolerInternal(data, printer) {
+  let { windowsPrinterName, portName, driverName } = printer;
+
+  if (!windowsPrinterName) {
+    const candidates = discoverUSBPrintersWindows();
+
+    if (candidates.length === 1) {
+      windowsPrinterName = candidates[0].windowsPrinterName;
+      portName = candidates[0].portName;
+      driverName = candidates[0].driverName;
+
+      // Persist the backfilled identity onto the live printer record so this
+      // resolution only ever has to happen once per printer.
+      printer.windowsPrinterName = windowsPrinterName;
+      printer.portName = portName;
+      printer.driverName = driverName;
+      try {
+        require('../persistence').savePersistedData();
+      } catch (e) {
+        logMessage('WARN', 'USBPrintWin', `Resolved Windows printer name but failed to persist it: ${e.message}`);
+      }
+      logMessage('INFO', 'USBPrintWin', `🔗 Resolved and persisted Windows printer name: "${windowsPrinterName}" (port: ${portName})`);
+    } else {
+      const error =
+        candidates.length === 0
+          ? `No local Windows printer found for "${printer.name}" — is it installed in Windows?`
+          : `Windows printer name not configured for "${printer.name}" and ${candidates.length} local printers were found — cannot tell which one it is. Re-add this printer from the discovery list to capture its identity.`;
+      logMessage('ERROR', 'USBPrintWin', `❌ ${error}`);
+      return {
+        success: false,
+        error,
+        diagnostics: { found: false, candidateCount: candidates.length },
+      };
+    }
+  }
+
+  return sendToUSBPrinterWindows(data, { ...printer, windowsPrinterName, portName, driverName });
+}
+
+/**
  * Send raw ESC/POS data to a USB printer on Windows via the print spooler.
- * Uses PowerShell + .NET RawPrinterHelper (winspool.Drv P/Invoke) to bypass libusb.
- * This is only called as a fallback when the normal libusb approach fails.
+ * Uses PowerShell + .NET RawPrinterHelper (winspool.Drv P/Invoke): OpenPrinter →
+ * StartDocPrinter (pDataType "RAW") → StartPagePrinter → WritePrinter → cleanup.
  */
 function sendToUSBPrinterWindows(data, printer) {
   return new Promise((resolve) => {
@@ -261,7 +315,7 @@ function sendToUSBPrinterWindows(data, printer) {
       const tempFile = pathModule.join(os.tmpdir(), `shopbot-print-${Date.now()}.bin`);
       fs.writeFileSync(tempFile, bufData);
 
-      logMessage('INFO', 'USBPrintWin', `📤 Windows fallback: Sending ${bufData.length} bytes to "${printerName}"...`);
+      logMessage('INFO', 'USBPrintWin', `📤 Sending ${bufData.length} bytes to "${printerName}" via Windows spooler...`);
 
       // Write the PowerShell script to a temp .ps1 file to avoid escaping issues
       const psScriptPath = pathModule.join(os.tmpdir(), `shopbot-rawprint-${Date.now()}.ps1`);
@@ -294,27 +348,35 @@ function sendToUSBPrinterWindows(data, printer) {
         `    public static extern bool EndPagePrinter(IntPtr hPrinter);`,
         `    [DllImport("winspool.Drv", EntryPoint="WritePrinter", SetLastError=true)]`,
         `    public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, int dwCount, out int dwWritten);`,
-        `    public static bool SendBytesToPrinter(string szPrinterName, byte[] data) {`,
+        `    public static string SendBytesToPrinter(string szPrinterName, byte[] data) {`,
         `        IntPtr hPrinter;`,
         `        DOCINFOA di = new DOCINFOA();`,
         `        di.pDocName = "ShopBot Receipt";`,
         `        di.pDataType = "RAW";`,
-        `        bool ok = false;`,
+        `        bool opened = false, started = false, page = false, written = false;`,
+        `        int bytesWritten = 0;`,
+        `        int lastError = 0;`,
         `        if (OpenPrinter(szPrinterName, out hPrinter, IntPtr.Zero)) {`,
+        `            opened = true;`,
         `            if (StartDocPrinter(hPrinter, 1, ref di)) {`,
+        `                started = true;`,
         `                if (StartPagePrinter(hPrinter)) {`,
+        `                    page = true;`,
         `                    IntPtr ptr = Marshal.AllocHGlobal(data.Length);`,
         `                    Marshal.Copy(data, 0, ptr, data.Length);`,
-        `                    int written;`,
-        `                    ok = WritePrinter(hPrinter, ptr, data.Length, out written);`,
+        `                    int wr;`,
+        `                    written = WritePrinter(hPrinter, ptr, data.Length, out wr);`,
+        `                    if (!written) { lastError = Marshal.GetLastWin32Error(); }`,
+        `                    bytesWritten = wr;`,
         `                    Marshal.FreeHGlobal(ptr);`,
         `                    EndPagePrinter(hPrinter);`,
-        `                }`,
+        `                } else { lastError = Marshal.GetLastWin32Error(); }`,
         `                EndDocPrinter(hPrinter);`,
-        `            }`,
+        `            } else { lastError = Marshal.GetLastWin32Error(); }`,
         `            ClosePrinter(hPrinter);`,
-        `        }`,
-        `        return ok;`,
+        `        } else { lastError = Marshal.GetLastWin32Error(); }`,
+        `        return string.Format("OPEN={0};STARTDOC={1};STARTPAGE={2};WRITE={3};BYTES={4};LASTERROR={5}",`,
+        `            opened ? 1 : 0, started ? 1 : 0, page ? 1 : 0, written ? 1 : 0, bytesWritten, lastError);`,
         `    }`,
         `}`,
         `"@`,
@@ -322,7 +384,7 @@ function sendToUSBPrinterWindows(data, printer) {
         `$result = [RawPrinterHelper]::SendBytesToPrinter($PrinterName, $bytes);`,
         `Remove-Item -Path $FilePath -Force -ErrorAction SilentlyContinue;`,
         `Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue;`,
-        `if ($result) { Write-Output 'SUCCESS' } else { Write-Output 'FAILED' }`,
+        `Write-Output "RESULT:$result"`,
       ];
 
       fs.writeFileSync(psScriptPath, psLines.join('\n'), 'utf8');
@@ -331,23 +393,33 @@ function sendToUSBPrinterWindows(data, printer) {
         timeout: 15000,
         windowsHide: true,
       }, (err, stdout, stderr) => {
-        // Cleanup temp files
+        // Cleanup temp files (best-effort — the script also tries to clean up itself)
         try { fs.unlinkSync(tempFile); } catch {}
         try { fs.unlinkSync(psScriptPath); } catch {}
 
         if (err) {
-          logMessage('ERROR', 'USBPrintWin', `PowerShell print failed: ${err.message}`);
-          resolve({ success: false, error: `Windows spooler error: ${err.message}` });
+          logMessage('ERROR', 'USBPrintWin', `PowerShell exec failed: ${err.message}`);
+          resolve({
+            success: false,
+            error: `Windows printer spooler error: ${err.message}`,
+            diagnostics: { printerName, portName: printer.portName, driverName: printer.driverName, execFailed: true },
+          });
           return;
         }
 
-        const output = (stdout || '').trim();
-        if (output.includes('SUCCESS')) {
-          logMessage('INFO', 'USBPrintWin', `✅ Printed to "${printerName}" via Windows spooler`);
-          resolve({ success: true });
+        const diagnostics = parseSpoolerResult((stdout || '').trim());
+        diagnostics.printerName = printerName;
+        diagnostics.portName = printer.portName;
+        diagnostics.driverName = printer.driverName;
+
+        if (diagnostics.write) {
+          logMessage('INFO', 'USBPrintWin', `✅ Printed to "${printerName}" via Windows spooler (${diagnostics.bytesWritten} bytes)`);
+          resolve({ success: true, diagnostics });
         } else {
-          logMessage('ERROR', 'USBPrintWin', `Windows print returned: ${output}. Stderr: ${stderr || 'none'}`);
-          resolve({ success: false, error: `Windows spooler: ${output || 'unknown error'}` });
+          const failedStep = !diagnostics.open ? 'OpenPrinter' : !diagnostics.startDoc ? 'StartDocPrinter' : !diagnostics.startPage ? 'StartPagePrinter' : 'WritePrinter';
+          const error = `Windows printer spooler error: ${failedStep} failed on "${printerName}" (port ${printer.portName || 'unknown'}, driver ${printer.driverName || 'unknown'}, Win32 error ${diagnostics.lastError})`;
+          logMessage('ERROR', 'USBPrintWin', `❌ ${error}. Raw output: ${stdout}. Stderr: ${stderr || 'none'}`);
+          resolve({ success: false, error, diagnostics });
         }
       });
     } catch (error) {
@@ -357,29 +429,29 @@ function sendToUSBPrinterWindows(data, printer) {
   });
 }
 
-/**
- * Resolve the Windows printer name for a USB printer on-the-fly.
- * Called when libusb fails and we need the Windows spooler name.
- */
-function resolveWindowsPrinterName(printer) {
-  if (printer.windowsPrinterName) return printer.windowsPrinterName;
-  if (process.platform !== 'win32') return null;
-
-  try {
-    const winPrinters = discoverUSBPrintersWindows();
-    if (winPrinters.length > 0) {
-      // Use the first Windows USB printer found
-      const winPrinter = winPrinters[0];
-      // Cache it on the printer object for future calls
-      printer.windowsPrinterName = winPrinter.windowsPrinterName;
-      printer.portName = winPrinter.portName;
-      safeLog(`🔗 [USB] Resolved Windows printer name: "${winPrinter.windowsPrinterName}" (port: ${winPrinter.portName})`);
-      return winPrinter.windowsPrinterName;
-    }
-  } catch (e) {
-    safeLog(`⚠️ [USB] Failed to resolve Windows printer name: ${e.message}`);
+/** Parse the `RESULT:OPEN=1;STARTDOC=1;STARTPAGE=1;WRITE=0;BYTES=0;LASTERROR=1801` line from the PS script. */
+function parseSpoolerResult(output) {
+  const line = output.split('\n').find((l) => l.startsWith('RESULT:'));
+  const fields = {};
+  if (line) {
+    line
+      .slice('RESULT:'.length)
+      .split(';')
+      .forEach((pair) => {
+        const [key, value] = pair.split('=');
+        if (key) fields[key] = value;
+      });
   }
-  return null;
+  return {
+    found: true,
+    open: fields.OPEN === '1',
+    startDoc: fields.STARTDOC === '1',
+    startPage: fields.STARTPAGE === '1',
+    write: fields.WRITE === '1',
+    bytesWritten: Number(fields.BYTES) || 0,
+    lastError: Number(fields.LASTERROR) || 0,
+    rawOutput: output,
+  };
 }
 
 module.exports = {
@@ -387,5 +459,4 @@ module.exports = {
   discoverUSBPrinters,
   discoverUSBPrintersWindows,
   sendToUSBPrinterWindows,
-  resolveWindowsPrinterName,
 };
