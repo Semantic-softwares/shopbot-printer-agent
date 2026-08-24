@@ -179,116 +179,102 @@ function startExpressServer() {
     socket.connect(port, ip);
   });
 
-  // USB printer test endpoint - tests connection and sends sample print
-  expressApp.post('/api/printers/usb/test', (req, res) => {
-    const { vendorId, productId, busNumber, deviceAddress, printerId } = req.body;
+  // USB printer test endpoint - sends a sample print and reports the real result.
+  // Looks the printer up by printerId first (the reliable, always-unique local id
+  // the client already sends) — vendorId/productId are only a fallback for older
+  // callers, since a Windows-identified printer legitimately has vendorId/productId
+  // 0 and multiple such printers would be indistinguishable by those alone.
+  expressApp.post('/api/printers/usb/test', async (req, res) => {
+    const { vendorId, productId, printerId } = req.body;
 
-    if (!vendorId || !productId) {
-      return res.status(400).json({ success: false, message: 'VendorId and ProductId required' });
-    }
-
-    try {
-      const usb = require('usb');
-      const devices = usb.getDeviceList();
-      safeLog(`🔍 [USB TEST] Scanning ${devices.length} USB devices for VID=0x${vendorId.toString(16).toUpperCase()} PID=0x${productId.toString(16).toUpperCase()}`);
-
-      // Find the device
-      const device = devices.find(
-        (d) => d.deviceDescriptor.idVendor === vendorId &&
-               d.deviceDescriptor.idProduct === productId &&
-               d.busNumber === busNumber &&
-               d.deviceAddress === deviceAddress
-      );
-      safeLog(`  Device found: ${!!device} (Bus ${busNumber}, Address ${deviceAddress})`);
-
-      if (!device) {
-        return res.json({
-          success: false,
-          message: `❌ USB device not found (${vendorId.toString(16)}:${productId.toString(16)})`
-        });
-      }
-
-      // Try to open the device to verify it's accessible
-      try {
-        device.open();
-        device.close();
-
-        // Device is accessible - now send test print
-        const testReceipt = Buffer.concat([
-          Buffer.from([0x1b, 0x40]),  // Initialize printer
-          Buffer.from([0x1b, 0x61, 0x01]),  // Center alignment
-          Buffer.from('PRINTER TEST\r\n'),
-          Buffer.from([0x1b, 0x2d, 0x01]),  // Underline on
-          Buffer.from('Sample Receipt\r\n'),
-          Buffer.from([0x1b, 0x2d, 0x00]),  // Underline off
-          Buffer.from('\r\n'),
-          Buffer.from([0x1b, 0x61, 0x00]),  // Left alignment
-          Buffer.from('Item 1..................$10.00\r\n'),
-          Buffer.from('Item 2..................$20.00\r\n'),
-          Buffer.from('Item 3..................$15.00\r\n'),
-          Buffer.from('\r\n'),
-          Buffer.from([0x1b, 0x61, 0x02]),  // Right alignment
-          Buffer.from('Total: $45.00\r\n'),
-          Buffer.from('\r\n'),
-          Buffer.from([0x1b, 0x61, 0x01]),  // Center alignment
-          Buffer.from('Thank you!\r\n'),
-          Buffer.from('Date: '),
-          Buffer.from(new Date().toLocaleString()),
-          Buffer.from('\r\n\r\n'),
-          Buffer.from([0x1d, 0x56, 0x00]),  // Cut paper
-        ]);
-
-        const jobId = `test-job-${state.printerStore.nextId++}`;
-        const printJob = {
-          id: jobId,
-          status: 'pending',
-          data: testReceipt,
-          printerId: printerId || null,
-          orderId: 'test',
-          orderRef: 'TEST-PRINT',
-          createdAt: new Date().toISOString(),
-          attempts: 0,
-          maxAttempts: 3,
-        };
-
-        state.printerStore.queue.push(printJob);
-        state.printerStore.printLogs.push({
-          ...printJob,
-          action: 'created',
-          timestamp: new Date().toISOString(),
-        });
-
-        // Send directly to the USB printer
-        const usbPrinter = state.printerStore.printers.find(
+    const usbPrinter = printerId
+      ? state.printerStore.printers.find((p) => p.id === printerId && p.type === 'usb')
+      : state.printerStore.printers.find(
           (p) => p.type === 'usb' && p.vendorId === vendorId && p.productId === productId
         );
 
-        if (usbPrinter) {
-          attemptUSBPrint(printJob, usbPrinter);
-        }
+    if (!usbPrinter) {
+      return res.status(400).json({ success: false, message: 'USB printer not found. Provide a valid printerId (or vendorId/productId).' });
+    }
 
-        return res.json({
-          success: true,
-          message: `✅ USB printer detected and printing test receipt (${vendorId.toString(16)}:${productId.toString(16)})`,
-          jobId
-        });
-      } catch (err) {
-        return res.json({
-          success: false,
-          message: `❌ Cannot access USB printer: ${err.message}`
-        });
-      }
+    try {
+      // The manual libusb open()/close() accessibility check that used to live here
+      // was removed: it's meaningless for a Windows-identified printer (no libusb
+      // device to open), and sendToUSBPrinter (via attemptUSBPrint below) already
+      // does a real, platform-correct access check as part of actually printing.
+      const testReceipt = Buffer.concat([
+        Buffer.from([0x1b, 0x40]),  // Initialize printer
+        Buffer.from([0x1b, 0x61, 0x01]),  // Center alignment
+        Buffer.from('PRINTER TEST\r\n'),
+        Buffer.from([0x1b, 0x2d, 0x01]),  // Underline on
+        Buffer.from('Sample Receipt\r\n'),
+        Buffer.from([0x1b, 0x2d, 0x00]),  // Underline off
+        Buffer.from('\r\n'),
+        Buffer.from([0x1b, 0x61, 0x00]),  // Left alignment
+        Buffer.from('Item 1..................$10.00\r\n'),
+        Buffer.from('Item 2..................$20.00\r\n'),
+        Buffer.from('Item 3..................$15.00\r\n'),
+        Buffer.from('\r\n'),
+        Buffer.from([0x1b, 0x61, 0x02]),  // Right alignment
+        Buffer.from('Total: $45.00\r\n'),
+        Buffer.from('\r\n'),
+        Buffer.from([0x1b, 0x61, 0x01]),  // Center alignment
+        Buffer.from('Thank you!\r\n'),
+        Buffer.from('Date: '),
+        Buffer.from(new Date().toLocaleString()),
+        Buffer.from('\r\n\r\n'),
+        Buffer.from([0x1d, 0x56, 0x00]),  // Cut paper
+      ]);
+
+      const jobId = `test-job-${state.printerStore.nextId++}`;
+      const printJob = {
+        id: jobId,
+        status: 'pending',
+        data: testReceipt,
+        printerId: usbPrinter.id,
+        orderId: 'test',
+        orderRef: 'TEST-PRINT',
+        createdAt: new Date().toISOString(),
+        attempts: 0,
+        maxAttempts: 3,
+      };
+
+      state.printerStore.queue.push(printJob);
+      state.printerStore.printLogs.push({
+        ...printJob,
+        action: 'created',
+        timestamp: new Date().toISOString(),
+      });
+
+      await attemptUSBPrint(printJob, usbPrinter);
+
+      return res.json({
+        success: printJob.status === 'success',
+        message: printJob.status === 'success'
+          ? `✅ Test receipt sent to "${usbPrinter.name}"`
+          : `❌ ${printJob.error || 'USB test failed'}`,
+        jobId,
+      });
     } catch (error) {
       res.json({ success: false, message: `❌ USB test failed: ${error.message}` });
     }
   });
 
   // USB printer print test - sends a sample receipt
-  expressApp.post('/api/printers/usb/print-test', (req, res) => {
-    const { vendorId, productId, busNumber, deviceAddress, printerId } = req.body;
+  expressApp.post('/api/printers/usb/print-test', async (req, res) => {
+    const { vendorId, productId, printerId } = req.body;
 
-    if (!vendorId || !productId) {
-      return res.status(400).json({ success: false, message: 'VendorId and ProductId required' });
+    // Same printerId-first lookup as /usb/test — see the comment there for why
+    // vendorId/productId alone can't be required (Windows-identified printers
+    // legitimately have both as 0, and several can't be told apart by that alone).
+    const usbPrinter = printerId
+      ? state.printerStore.printers.find((p) => p.id === printerId && p.type === 'usb')
+      : state.printerStore.printers.find(
+          (p) => p.type === 'usb' && p.vendorId === vendorId && p.productId === productId
+        );
+
+    if (!usbPrinter) {
+      return res.status(400).json({ success: false, message: 'USB printer not found. Provide a valid printerId (or vendorId/productId).' });
     }
 
     try {
@@ -322,7 +308,7 @@ function startExpressServer() {
         id: jobId,
         status: 'pending',
         data: testReceipt,
-        printerId: printerId || null,
+        printerId: usbPrinter.id,
         orderId: 'test',
         orderRef: 'TEST-PRINT',
         createdAt: new Date().toISOString(),
@@ -337,17 +323,15 @@ function startExpressServer() {
         timestamp: new Date().toISOString(),
       });
 
-      // Send directly to the USB printer
-      const usbPrinter = state.printerStore.printers.find(
-        (p) => p.type === 'usb' && p.vendorId === vendorId && p.productId === productId
-      );
+      await attemptUSBPrint(printJob, usbPrinter);
 
-      if (usbPrinter) {
-        attemptUSBPrint(printJob, usbPrinter);
-        res.json({ success: true, message: '✅ Test print sent to USB printer', jobId });
-      } else {
-        res.json({ success: false, message: '❌ USB printer not found in configured printers' });
-      }
+      res.json({
+        success: printJob.status === 'success',
+        message: printJob.status === 'success'
+          ? `✅ Test print sent to "${usbPrinter.name}"`
+          : `❌ ${printJob.error || 'Test print failed'}`,
+        jobId,
+      });
     } catch (error) {
       res.status(500).json({ success: false, message: `❌ Test print failed: ${error.message}` });
     }
@@ -564,11 +548,16 @@ function startExpressServer() {
   });
 
   expressApp.post('/api/printers/add', (req, res) => {
-    const { name, ip, port, type, vendorId, productId, busNumber, deviceAddress } = req.body;
+    const { name, ip, port, type, vendorId, productId, busNumber, deviceAddress, windowsPrinterName, portName, driverName } = req.body;
 
-    // Validate based on printer type
+    // Validate based on printer type. A USB printer is identified either by
+    // libusb VID/PID (macOS/Linux, and Windows when it happens to be resolvable)
+    // or by a Windows spooler name (WMI-discovered — vendorId/productId are
+    // legitimately 0 in that case, so we can't require them).
     if (type === 'usb') {
-      if (!name || !vendorId || !productId || busNumber === undefined || !deviceAddress === undefined) {
+      const hasUsbIdentity = vendorId && productId && busNumber !== undefined && deviceAddress !== undefined;
+      const hasWindowsIdentity = !!windowsPrinterName;
+      if (!name || (!hasUsbIdentity && !hasWindowsIdentity)) {
         return res.status(400).json({ success: false, message: 'USB printer data required' });
       }
     } else {
@@ -595,6 +584,13 @@ function startExpressServer() {
       newPrinter.productId = productId;
       newPrinter.busNumber = busNumber;
       newPrinter.deviceAddress = deviceAddress;
+      // Windows spooler identity, when known at registration time — lets
+      // sendToUSBPrinterViaSpooler print without ever re-resolving/guessing.
+      if (windowsPrinterName) {
+        newPrinter.windowsPrinterName = windowsPrinterName;
+        newPrinter.portName = portName || '';
+        newPrinter.driverName = driverName || '';
+      }
     }
 
     state.printerStore.printers.push(newPrinter);

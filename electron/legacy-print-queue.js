@@ -14,7 +14,7 @@
 const net = require('net');
 const state = require('./state');
 const { safeLog } = require('./logger');
-const { resolveWindowsPrinterName, sendToUSBPrinterWindows } = require('./printers/usb');
+const { sendToUSBPrinter } = require('./printers/usb');
 
 /** Route to the correct printing method based on printer type. */
 function attemptPrint(job, printer) {
@@ -76,148 +76,43 @@ function attemptNetworkPrint(job, printer) {
   socket.connect(printer.port, printer.ip);
 }
 
-function attemptUSBPrint(job, printer) {
-  try {
-    const usb = require('usb');
-
-    // Find USB device by bus and device address
-    const device = usb.getDeviceList().find(
-      (dev) => dev.busNumber === printer.busNumber && dev.deviceAddress === printer.deviceAddress
-    );
-
-    if (!device) {
-      job.status = 'failed';
-      job.error = 'USB device not found';
-      job.attempts++;
-      safeLog(`❌ [USB PRINT] Device not found for ${printer.name}`);
-
-      if (job.attempts < job.maxAttempts) {
-        setTimeout(() => attemptUSBPrint(job, printer), 1000);
-      }
-      return;
+/**
+ * Delegates to sendToUSBPrinter (electron/printers/usb.js), which already
+ * handles platform routing — libusb on macOS/Linux, the Windows Print Spooler
+ * on Windows — plus the matching/timeout/diagnostics logic for both. Keeping
+ * a second, independent libusb implementation here (bus+address-only matching,
+ * no Windows routing) meant this code path could hit LIBUSB_ERROR_NOT_SUPPORTED
+ * on Windows even after the same bug was fixed in the main job pipeline.
+ */
+async function attemptUSBPrint(job, printer) {
+  let printData = job.data;
+  if (typeof printData === 'string') {
+    try {
+      printData = Buffer.from(printData, 'base64');
+    } catch (e) {
+      printData = Buffer.from(printData, 'utf8');
     }
+  }
 
-    // Open USB device and send data directly
-    device.open();
+  const result = await sendToUSBPrinter(printData, printer);
 
-    // Find the OUT endpoint (usually endpoint 1 or 3)
-    const iface = device.interfaces[0];
-    if (!iface) {
-      device.close();
-      job.status = 'failed';
-      job.error = 'No USB interface found';
-      safeLog(`❌ [USB PRINT] No interface for ${printer.name}`);
-      return;
-    }
+  if (result.success) {
+    job.status = 'success';
+    job.completedAt = new Date().toISOString();
 
-    iface.claim();
-
-    // Find OUT endpoint
-    let outEndpoint = null;
-    for (const endpoint of iface.endpoints) {
-      if (endpoint.direction === 'out') {
-        outEndpoint = endpoint;
-        break;
-      }
-    }
-
-    if (!outEndpoint) {
-      iface.release();
-      device.close();
-      job.status = 'failed';
-      job.error = 'No OUT endpoint found';
-      safeLog(`❌ [USB PRINT] No OUT endpoint for ${printer.name}`);
-      return;
-    }
-
-    // Prepare data
-    let printData = job.data;
-    if (typeof printData === 'string') {
-      // Try base64 decode first
-      try {
-        printData = Buffer.from(printData, 'base64');
-      } catch (e) {
-        // If not base64, use as UTF-8 string
-        printData = Buffer.from(printData, 'utf8');
-      }
-    }
-
-    // Send data to printer
-    outEndpoint.transfer(printData, (err) => {
-      try {
-        iface.release();
-        device.close();
-      } catch (e) {
-        // Ignore cleanup errors
-      }
-
-      if (err) {
-        job.status = 'failed';
-        job.error = err.message;
-        job.attempts++;
-        safeLog(`❌ [USB PRINT] Error on ${printer.name} - Attempt ${job.attempts}/${job.maxAttempts}: ${err.message}`);
-
-        if (job.attempts < job.maxAttempts) {
-          setTimeout(() => attemptUSBPrint(job, printer), 1000);
-        }
-      } else {
-        job.status = 'success';
-        job.completedAt = new Date().toISOString();
-
-        state.printerStore.printLogs.push({
-          ...job,
-          action: 'completed',
-          printer: printer.name,
-          timestamp: new Date().toISOString(),
-        });
-
-        safeLog(`✅ [USB PRINT] Sent to ${printer.name} (USB)`);
-      }
+    state.printerStore.printLogs.push({
+      ...job,
+      action: 'completed',
+      printer: printer.name,
+      timestamp: new Date().toISOString(),
     });
-  } catch (error) {
-    safeLog(`❌ [USB PRINT] Exception on ${printer.name}: ${error.message}`);
 
-    // On Windows, try native fallback before giving up or retrying
-    if (process.platform === 'win32') {
-      const winName = resolveWindowsPrinterName(printer);
-      if (winName) {
-        safeLog(`⚠️ [USB PRINT] libusb failed, trying Windows-native print for "${winName}"...`);
-        sendToUSBPrinterWindows(job.data, { ...printer, windowsPrinterName: winName }).then((winResult) => {
-          if (winResult.success) {
-            job.status = 'success';
-            job.completedAt = new Date().toISOString();
-            state.printerStore.printLogs.push({
-              ...job,
-              action: 'completed',
-              printer: printer.name,
-              timestamp: new Date().toISOString(),
-            });
-            safeLog(`✅ [USB PRINT] Sent to ${printer.name} via Windows fallback`);
-          } else {
-            safeLog(`❌ [USB PRINT] Windows fallback also failed: ${winResult.error}`);
-            job.status = 'failed';
-            job.error = `libusb: ${error.message}, Windows: ${winResult.error}`;
-            job.attempts++;
-            if (job.attempts < job.maxAttempts) {
-              setTimeout(() => attemptUSBPrint(job, printer), 1000);
-            }
-          }
-        }).catch((winErr) => {
-          safeLog(`❌ [USB PRINT] Windows fallback exception: ${winErr.message}`);
-          job.status = 'failed';
-          job.error = error.message;
-          job.attempts++;
-          if (job.attempts < job.maxAttempts) {
-            setTimeout(() => attemptUSBPrint(job, printer), 1000);
-          }
-        });
-        return; // Don't execute normal failure path — Windows fallback handles it
-      }
-    }
-
+    safeLog(`✅ [USB PRINT] Sent to ${printer.name} (USB)`);
+  } else {
     job.status = 'failed';
-    job.error = error.message;
+    job.error = result.error;
     job.attempts++;
+    safeLog(`❌ [USB PRINT] Error on ${printer.name} - Attempt ${job.attempts}/${job.maxAttempts}: ${result.error}`);
 
     if (job.attempts < job.maxAttempts) {
       setTimeout(() => attemptUSBPrint(job, printer), 1000);

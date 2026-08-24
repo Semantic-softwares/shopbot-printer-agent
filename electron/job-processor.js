@@ -112,6 +112,16 @@ function matchLocalPrinter(job) {
       printer = state.printerStore.printers.find(
         (p) => p.type === 'usb' && p.vendorId === pd.connection.vendorId && p.productId === pd.connection.productId
       );
+    } else if (connType === 'usb-os' && pd.connection.deviceName) {
+      // Windows-identified USB printers have no usable vendorId/productId (WMI can't
+      // see them) — deviceName carries the Windows printer name instead, matched
+      // against the same identity sendToUSBPrinter uses to actually print to it.
+      printer = state.printerStore.printers.find(
+        (p) =>
+          p.type === 'usb' &&
+          p.windowsPrinterName &&
+          p.windowsPrinterName.trim().toLowerCase() === pd.connection.deviceName.trim().toLowerCase()
+      );
     } else if (connType === 'bluetooth' && pd.connection.macAddress) {
       printer = state.printerStore.printers.find(
         (p) => p.type === 'bluetooth' && p.macAddress === pd.connection.macAddress
@@ -183,7 +193,7 @@ async function processBackendJob(job) {
       const printerName = pd ? pd.name : 'unknown';
       const connType = pd ? pd.connectionType : 'unknown';
       logMessage('WARN', 'JobProcessor', `⏭️ No matching local printer for "${printerName}" (${connType}). Job ${job._id} will remain pending.`);
-      logMessage('DEBUG', 'JobProcessor', `Registered printers: ${state.printerStore.printers.map(p => `${p.name}(${p.type})`).join(', ')}`);
+      logMessage('DEBUG', 'JobProcessor', `Registered printers: ${state.printerStore.printers.map(p => `${p.name}(${p.type}${p.windowsPrinterName ? `, win:${p.windowsPrinterName}` : ''})`).join(', ')}`);
       // Release the lock so another device with the right printer can pick it up
       await failBackendJob(job._id, `No matching printer found for "${printerName}" (${connType}). This device does not have this printer connected.`);
       logEntry.status = 'failed';

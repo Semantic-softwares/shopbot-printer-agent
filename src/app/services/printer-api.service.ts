@@ -83,6 +83,9 @@ export class PrinterApiService {
       productId: printerData.productId,
       busNumber: printerData.busNumber,
       deviceAddress: printerData.deviceAddress,
+      windowsPrinterName: printerData.windowsPrinterName,
+      portName: printerData.portName,
+      driverName: printerData.driverName,
     });
   }
 

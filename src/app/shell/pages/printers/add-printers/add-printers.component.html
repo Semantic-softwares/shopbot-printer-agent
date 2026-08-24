@@ -94,7 +94,11 @@
                 <button (click)="selectUSBPrinter(printer)"
                         class="w-full flex flex-col gap-1 px-5 py-3.5 text-left hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">
                   <span class="text-sm font-medium text-gray-900 dark:text-white">{{ printer.name || 'USB Printer ' + printer.productId }}</span>
-                  <span class="text-xs text-gray-400 dark:text-slate-500 font-mono">VID {{ formatHex(printer.vendorId) }} ({{ printer.vendorId }}) · PID {{ formatHex(printer.productId) }} ({{ printer.productId }})</span>
+                  @if (printer.windowsPrinterName) {
+                    <span class="text-xs text-gray-400 dark:text-slate-500 font-mono">Windows printer · Port {{ printer.portName || 'unknown' }}</span>
+                  } @else {
+                    <span class="text-xs text-gray-400 dark:text-slate-500 font-mono">VID {{ formatHex(printer.vendorId) }} ({{ printer.vendorId }}) · PID {{ formatHex(printer.productId) }} ({{ printer.productId }})</span>
+                  }
                 </button>
               }
             </div>
@@ -115,23 +119,42 @@
                 </button>
               </div>
 
-              <p class="text-xs text-gray-500 dark:text-slate-400">
-                Use these values in the back-office's Add Printer form (Connection Type: USB Raw).
-              </p>
+              @if (selectedUSBPrinter().windowsPrinterName) {
+                <p class="text-xs text-gray-500 dark:text-slate-400">
+                  Identified via the Windows printer spooler — this printer will be reached through Windows' own RAW printing, not direct USB access.
+                  In the back-office's Add Printer form, use Connection Type "usb-os" and paste this exact Windows Printer Name into the Device Name field — it must match exactly (case-insensitive) for jobs to reach this printer.
+                </p>
 
-              <div class="divide-y divide-gray-200 dark:divide-slate-600 rounded-lg border border-gray-200 dark:border-slate-600 overflow-hidden bg-white dark:bg-slate-800">
-                <app-copy-field
-                  label="Vendor ID"
-                  [value]="selectedUSBPrinter().vendorId + ''"
-                  [displayValue]="selectedUSBPrinter().vendorId + ' (' + formatHex(selectedUSBPrinter().vendorId) + ')'" />
-                <app-copy-field
-                  label="Product ID"
-                  [value]="selectedUSBPrinter().productId + ''"
-                  [displayValue]="selectedUSBPrinter().productId + ' (' + formatHex(selectedUSBPrinter().productId) + ')'" />
-                <app-copy-field
-                  label="Device Name"
-                  [value]="selectedUSBPrinter().vendorId + ':' + selectedUSBPrinter().productId" />
-              </div>
+                <div class="divide-y divide-gray-200 dark:divide-slate-600 rounded-lg border border-gray-200 dark:border-slate-600 overflow-hidden bg-white dark:bg-slate-800">
+                  <app-copy-field
+                    label="Windows Printer Name"
+                    [value]="selectedUSBPrinter().windowsPrinterName" />
+                  <app-copy-field
+                    label="Port"
+                    [value]="selectedUSBPrinter().portName || ''" />
+                  <app-copy-field
+                    label="Driver"
+                    [value]="selectedUSBPrinter().driverName || ''" />
+                </div>
+              } @else {
+                <p class="text-xs text-gray-500 dark:text-slate-400">
+                  Use these values in the back-office's Add Printer form (Connection Type: USB Raw).
+                </p>
+
+                <div class="divide-y divide-gray-200 dark:divide-slate-600 rounded-lg border border-gray-200 dark:border-slate-600 overflow-hidden bg-white dark:bg-slate-800">
+                  <app-copy-field
+                    label="Vendor ID"
+                    [value]="selectedUSBPrinter().vendorId + ''"
+                    [displayValue]="selectedUSBPrinter().vendorId + ' (' + formatHex(selectedUSBPrinter().vendorId) + ')'" />
+                  <app-copy-field
+                    label="Product ID"
+                    [value]="selectedUSBPrinter().productId + ''"
+                    [displayValue]="selectedUSBPrinter().productId + ' (' + formatHex(selectedUSBPrinter().productId) + ')'" />
+                  <app-copy-field
+                    label="Device Name"
+                    [value]="selectedUSBPrinter().vendorId + ':' + selectedUSBPrinter().productId" />
+                </div>
+              }
             </div>
 
             <div>

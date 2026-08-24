@@ -65,6 +65,15 @@ export class AddPrintersComponent {
   }
 
   usbRegistrationSummary(printer: any): string {
+    if (printer.windowsPrinterName) {
+      return [
+        `Name: ${printer.name || ''}`,
+        `Connection Type: windows-spooler`,
+        `Windows Printer Name: ${printer.windowsPrinterName}`,
+        `Port: ${printer.portName || 'unknown'}`,
+        `Driver: ${printer.driverName || 'unknown'}`,
+      ].join('\n');
+    }
     return [
       `Name: ${printer.name || ''}`,
       `Connection Type: usb-raw`,
@@ -141,7 +150,7 @@ export class AddPrintersComponent {
     if (!this.isUSBFormValid()) return;
 
     const selected = this.selectedUSBPrinter();
-    const printerData = {
+    const printerData: any = {
       name: this.usbPrinterName(),
       type: 'usb',
       vendorId: selected.vendorId,
@@ -149,6 +158,14 @@ export class AddPrintersComponent {
       busNumber: selected.busNumber,
       deviceAddress: selected.deviceAddress,
     };
+
+    // Windows WMI-discovered candidates carry a spooler identity instead of
+    // (or alongside) VID/PID — forward it so it can actually be persisted.
+    if (selected.windowsPrinterName) {
+      printerData.windowsPrinterName = selected.windowsPrinterName;
+      printerData.portName = selected.portName;
+      printerData.driverName = selected.driverName;
+    }
 
     this.printerApi.addUSBPrinter(printerData).subscribe({
       next: (result: any) => {
