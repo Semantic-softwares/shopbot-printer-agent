@@ -9,7 +9,7 @@ const state = require('./electron/state');
 const { logMessage } = require('./electron/logger');
 const { loadPersistedData } = require('./electron/persistence');
 const { startExpressServer } = require('./electron/api-server');
-const { startBackendPolling } = require('./electron/polling-service');
+const { connectSocket } = require('./electron/socket-service');
 const { startPrinterStatusCheck } = require('./electron/printers/dispatch');
 const { createWindow } = require('./electron/window');
 const { setupAutoUpdater } = require('./electron/auto-updater');
@@ -39,6 +39,9 @@ app.whenReady().then(async () => {
       state.activeStoreId = persisted.activeStoreId;
       logMessage('INFO', 'Startup', `Restored store ID: ${state.activeStoreId}`);
     }
+    if (persisted.deviceToken) {
+      state.deviceToken = persisted.deviceToken;
+    }
     if (persisted.printers && persisted.printers.length > 0) {
       state.printerStore.printers = persisted.printers;
       logMessage('INFO', 'Startup', `Restored ${persisted.printers.length} printer(s)`);
@@ -53,7 +56,7 @@ app.whenReady().then(async () => {
 
   startExpressServer();
   startPrinterStatusCheck(); // Start periodic status checks
-  startBackendPolling(); // Start polling for backend jobs (uses restored storeId)
+  connectSocket(); // Connect for pushed print jobs (uses restored storeId/deviceToken)
   createWindow();
   setupAutoUpdater(); // Check for updates after window is created
 });

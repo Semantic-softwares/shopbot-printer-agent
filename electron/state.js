@@ -20,7 +20,6 @@ const config = {
     (isDev ? 'http://localhost:3000' : 'https://shopbot-server-7d7f5c27c0b7.herokuapp.com'),
   branchId: process.env.BRANCH_ID || 'default-branch',
   deviceId: process.env.DEVICE_ID || `printer-${Date.now()}`,
-  pollInterval: parseInt(process.env.POLL_INTERVAL) || 3000,
   logLevel: process.env.LOG_LEVEL || 'INFO',
 };
 
@@ -51,14 +50,18 @@ module.exports = {
   // Active store — set by the Angular login flow, persisted to disk
   activeStoreId: null,
 
-  // Polling loop state
-  pollingActive: false,
-  pollingTimeoutId: null, // setTimeout-based chain (NOT setInterval)
-  isCurrentlyPolling: false, // guards against overlapping poll cycles
-  consecutiveFailures: 0,
-  lastSuccessfulPoll: Date.now(),
-  pollWatchdogId: null,
-  MAX_CONSECUTIVE_FAILURES: 10,
-  WATCHDOG_INTERVAL_MS: 15000, // check every 15s that polling is alive
-  MAX_POLL_SILENCE_MS: 30000, // if no success in 30s, force restart
+  // Device-scoped socket auth token — minted server-side at login (see
+  // electron/api-server.js POST /api/config/store), persisted to disk
+  deviceToken: null,
+
+  // Push-delivery (socket) connection state. Print jobs arrive via
+  // 'printJob:created' pushes now — there is no recurring poll loop; the only
+  // fetches left are one-shot catch-up reads triggered by a socket connect/
+  // reconnect event (see electron/polling-service.js's pollPrintJobs(),
+  // called from electron/socket-service.js).
+  socketConnected: false,
+  lastSocketEventAt: Date.now(),
+  isCurrentlyPolling: false, // guards a catch-up fetch against overlapping itself
+  consecutiveFailures: 0, // consecutive catch-up-fetch failures, for UI health display
+  lastSuccessfulPoll: Date.now(), // last successful catch-up fetch, for UI display
 };
