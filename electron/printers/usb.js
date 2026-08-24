@@ -104,8 +104,19 @@ function sendToUSBPrinterInternal(data, printer) {
   });
 }
 
-/** Discover USB printers via libusb, matched against a known-vendor allowlist. */
+/**
+ * Discover USB printers. On Windows this always goes through the Windows
+ * printer subsystem (WMI), never libusb — libusb enumeration can actually
+ * succeed on Windows (it only fails to *claim the interface*, at print time),
+ * so relying on it here would register a printer with a vendorId/productId
+ * identity but no windowsPrinterName, leaving nothing but an always-ambiguous
+ * multi-candidate WMI lookup to resolve it at print time. WMI discovery is
+ * unambiguous up front because the user picks the printer by name.
+ */
 function discoverUSBPrinters() {
+  if (process.platform === 'win32') {
+    return discoverUSBPrintersWindows();
+  }
   try {
     const usb = require('usb');
     const usbDevices = usb.getDeviceList();
@@ -163,13 +174,8 @@ function discoverUSBPrinters() {
     safeLog(`🎯 [USB DISCOVERY] Total printers found: ${usbPrinters.length}`);
     return usbPrinters;
   } catch (error) {
-    // libusb failed — on Windows this is common (usbprint.sys blocks libusb access)
-    // Fall back to Windows-native printer discovery via PowerShell + WMI
-    if (process.platform === 'win32') {
-      safeLog(`⚠️ [USB DISCOVERY] libusb failed (${error.message}), trying Windows-native discovery...`);
-      return discoverUSBPrintersWindows();
-    }
-    // On other platforms, silently ignore (avoid EPIPE on broken pipes)
+    // Windows never reaches here (returned above) — this is the macOS/Linux
+    // libusb failure path; silently ignore (avoid EPIPE on broken pipes).
     return [];
   }
 }
