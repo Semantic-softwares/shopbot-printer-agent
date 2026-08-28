@@ -165,6 +165,14 @@ function composeStationReceipt(job) {
   r += `Order #${meta.reference || job.order}\n`;
   r += CMD.BOLD_OFF;
   r += `${formatDateTime(meta.createdAt)}\n`;
+  if (meta.itemsEditedAt) {
+    r += CMD.FONT_SMALL_BOLD;
+    r += `EDITED ${formatDateTime(meta.itemsEditedAt)}\n`;
+    r += CMD.FONT_NORMAL;
+  }
+  r += CMD.FONT_SMALL;
+  r += `Printed: ${formatDateTime(new Date())}\n`;
+  r += CMD.FONT_NORMAL;
   if (meta.type) r += `Type: ${meta.type}\n`;
   if (meta.table) {
     r += CMD.BOLD_ON;
@@ -294,6 +302,14 @@ function composeMasterReceipt(job) {
   r += `Order #${meta.reference || job.order}\n`;
   r += CMD.BOLD_OFF;
   r += `Date: ${formatDateTime(meta.createdAt)}\n`;
+  if (meta.itemsEditedAt) {
+    r += CMD.FONT_SMALL_BOLD;
+    r += `EDITED ${formatDateTime(meta.itemsEditedAt)}\n`;
+    r += CMD.FONT_NORMAL;
+  }
+  r += CMD.FONT_SMALL;
+  r += `Printed: ${formatDateTime(new Date())}\n`;
+  r += CMD.FONT_NORMAL;
   if (meta.type) r += `Type: ${meta.type}\n`;
   if (meta.salesChannel) r += `Channel: ${meta.salesChannel}\n`;
   if (meta.table) {
