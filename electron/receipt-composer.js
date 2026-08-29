@@ -164,6 +164,11 @@ function composeStationReceipt(job) {
   r += CMD.BOLD_ON;
   r += `Order #${meta.reference || job.order}\n`;
   r += CMD.BOLD_OFF;
+  if (meta.salesChannel === 'Qrcode') {
+    r += CMD.FONT_SMALL_BOLD;
+    r += `SELF-ORDER (QR)\n`;
+    r += CMD.FONT_NORMAL;
+  }
   r += `${formatDateTime(meta.createdAt)}\n`;
   if (meta.itemsEditedAt) {
     r += CMD.FONT_SMALL_BOLD;
@@ -179,8 +184,8 @@ function composeStationReceipt(job) {
     r += `Table: ${meta.table}\n`;
     r += CMD.BOLD_OFF;
   }
-  if (settings.showCustomerName !== false && meta.guest) {
-    r += `Guest: ${meta.guest}\n`;
+  if (settings.showCustomerName !== false && (meta.guestName || meta.guest)) {
+    r += `Guest: ${meta.guestName || meta.guest}\n`;
   }
   if (settings.showSellerInfo !== false && meta.staff) {
     r += `Server: ${meta.staff}\n`;
@@ -229,6 +234,15 @@ function composeStationReceipt(job) {
     if (settings.showNote !== false && item.notes) {
       r += CMD.FONT_SMALL;
       r += `     ** ${item.notes}\n`;
+      r += CMD.FONT_NORMAL;
+    }
+
+    // Only ever set on self-order lines — several phones can add to the same
+    // shared table order, so this is who added *this* item, distinct from the
+    // "Guest:" line above (whoever opened the tab). Same toggle as that line.
+    if (settings.showCustomerName !== false && item.orderedBy) {
+      r += CMD.FONT_SMALL;
+      r += `     for: ${item.orderedBy}\n`;
       r += CMD.FONT_NORMAL;
     }
 
@@ -301,6 +315,11 @@ function composeMasterReceipt(job) {
   r += CMD.BOLD_ON;
   r += `Order #${meta.reference || job.order}\n`;
   r += CMD.BOLD_OFF;
+  if (meta.salesChannel === 'Qrcode') {
+    r += CMD.FONT_SMALL_BOLD;
+    r += `SELF-ORDER (QR)\n`;
+    r += CMD.FONT_NORMAL;
+  }
   r += `Date: ${formatDateTime(meta.createdAt)}\n`;
   if (meta.itemsEditedAt) {
     r += CMD.FONT_SMALL_BOLD;
@@ -311,14 +330,13 @@ function composeMasterReceipt(job) {
   r += `Printed: ${formatDateTime(new Date())}\n`;
   r += CMD.FONT_NORMAL;
   if (meta.type) r += `Type: ${meta.type}\n`;
-  if (meta.salesChannel) r += `Channel: ${meta.salesChannel}\n`;
   if (meta.table) {
     r += CMD.BOLD_ON;
     r += `Table: ${meta.table}\n`;
     r += CMD.BOLD_OFF;
   }
-  if (settings.showCustomerName !== false && meta.guest) {
-    r += `Guest: ${meta.guest}\n`;
+  if (settings.showCustomerName !== false && (meta.guestName || meta.guest)) {
+    r += `Guest: ${meta.guestName || meta.guest}\n`;
   }
   if (settings.showSellerInfo !== false && meta.staff) {
     r += `Server: ${meta.staff}\n`;
@@ -377,6 +395,15 @@ function composeMasterReceipt(job) {
     if (product.notes) {
       r += CMD.FONT_SMALL;
       r += `     ** ${product.notes}\n`;
+      r += CMD.FONT_NORMAL;
+    }
+
+    // Only ever set on self-order lines — several phones can add to the same
+    // shared table order, so this is who added *this* item, distinct from the
+    // "Guest:" line above (whoever opened the tab). Same toggle as that line.
+    if (settings.showCustomerName !== false && product.orderedBy) {
+      r += CMD.FONT_SMALL;
+      r += `     for: ${product.orderedBy}\n`;
       r += CMD.FONT_NORMAL;
     }
 
