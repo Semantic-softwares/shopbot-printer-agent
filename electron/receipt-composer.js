@@ -444,9 +444,33 @@ function composeMasterReceipt(job) {
   }
 
   r += drawLine(cols, '-');
-  if (meta.payment) {
+  // A bill can be settled with several tenders. When the breakdown is present
+  // each one gets its own line; otherwise fall back to the single summary
+  // string, which keeps old orders and older servers printing exactly as
+  // before. Height is unbounded on a thermal roll, so extra lines cost only
+  // paper.
+  const payments = Array.isArray(meta.payments) ? meta.payments : [];
+  if (payments.length > 1) {
+    r += padLine('Paid via', '', cols);
+    payments.forEach((p) => {
+      r += padLine(`  ${p.method}`, fmtCurrency(p.amount, currencyCode), cols);
+    });
+  } else if (payments.length === 1) {
+    r += padLine('Paid via', payments[0].method, cols);
+  } else if (meta.payment) {
     r += padLine('Paid via', meta.payment, cols);
   }
+
+  // Only meaningful on an over-tender, which is cash-only — printing
+  // "Tendered" equal to the total on every card sale would just be noise.
+  if (meta.changeDue > 0) {
+    const tendered = payments.reduce((sum, p) => sum + (p.tendered || 0), 0);
+    r += padLine('Tendered', fmtCurrency(tendered, currencyCode), cols);
+    r += CMD.BOLD_ON;
+    r += padLine('Change', fmtCurrency(meta.changeDue, currencyCode), cols);
+    r += CMD.BOLD_OFF;
+  }
+
   if (meta.paymentStatus) {
     r += padLine('Status', meta.paymentStatus, cols);
   }
