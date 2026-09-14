@@ -2,6 +2,7 @@ import { Component, signal, computed, inject, ChangeDetectionStrategy } from '@a
 import { RouterOutlet, RouterLink, RouterLinkActive, Router } from '@angular/router';
 import { AuthService } from '../services/auth.service';
 import { StoreService } from '../services/store.service';
+import { environment } from '../../environments/environment';
 
 export interface NavLink {
   path: string;
@@ -28,6 +29,10 @@ export class ShellComponent {
 
   storeName = computed(() => this.storeService.currentStore()?.name ?? 'ShopBot Printer');
 
+  // Hidden entirely for the common case of an admin of exactly one store —
+  // nothing to switch to.
+  hasMultipleStores = computed(() => this.storeService.stores().length > 1);
+
   readonly navLinks: NavLink[] = [
     { path: '/dashboard', label: 'Dashboard', icon: '📊', exact: true },
     { path: '/dashboard/printers', label: 'Printers', icon: '🖨️' },
@@ -45,12 +50,17 @@ export class ShellComponent {
     localStorage.setItem('darkMode', String(this.darkMode()));
   }
 
+  switchStore(): void {
+    this.router.navigate(['/select-store']);
+  }
+
   logout(): void {
     this.authService.logout();
     this.storeService.removeStoreLocally();
+    this.storeService.removeStoresLocally();
 
     // Tell Express to clear store config and stop polling
-    fetch('http://localhost:4001/api/config/store', { method: 'DELETE' }).catch((err) =>
+    fetch(`${environment.expressUrl}/config/store`, { method: 'DELETE' }).catch((err) =>
       console.error('Failed to clear Express config:', err)
     );
 

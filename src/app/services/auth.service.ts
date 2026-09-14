@@ -64,6 +64,7 @@ export class AuthService {
     this.sessionStorage.removeCurrentUser();
     this.sessionStorage.removeAuthToken();
     this.sessionStorage.removeStore();
+    this.sessionStorage.removeStores();
     this.currentUserSubject.next(null);
     this._isLoggedIn.set(false);
   }

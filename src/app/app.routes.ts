@@ -1,5 +1,6 @@
 import { Routes } from '@angular/router';
 import { authGuard } from './shared/guards/auth.guard';
+import { storeSelectedGuard } from './shared/guards/store-selected.guard';
 
 export const routes: Routes = [
   {
@@ -13,8 +14,14 @@ export const routes: Routes = [
       import('./login/login.routes').then((m) => m.LOGIN_ROUTES),
   },
   {
-    path: 'dashboard',
+    path: 'select-store',
     canActivate: [authGuard],
+    loadComponent: () =>
+      import('./select-store/select-store.component').then((m) => m.SelectStoreComponent),
+  },
+  {
+    path: 'dashboard',
+    canActivate: [authGuard, storeSelectedGuard],
     loadComponent: () =>
       import('./shell/shell.component').then((m) => m.ShellComponent),
     loadChildren: () =>

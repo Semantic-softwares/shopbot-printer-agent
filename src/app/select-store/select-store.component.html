@@ -1,0 +1,53 @@
+<div class="min-h-screen w-full flex flex-col items-center justify-center px-6 py-12 bg-gray-50 dark:bg-slate-900 transition-colors duration-200">
+  <div class="w-full max-w-lg">
+    <div class="text-center mb-8">
+      <h1 class="text-2xl font-bold text-gray-900 dark:text-white mb-1">🖨️ ShopBot Printer</h1>
+      <h2 class="text-xl font-semibold text-gray-800 dark:text-white mb-2">Select a store</h2>
+      <p class="text-gray-500 dark:text-slate-400">You administer more than one store. Choose which one this device prints for.</p>
+    </div>
+
+    @if (errorMessage()) {
+      <div class="mb-6 p-4 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg">
+        <p class="text-sm text-red-700 dark:text-red-400">{{ errorMessage() }}</p>
+      </div>
+    }
+
+    <div class="flex flex-col gap-3">
+      @for (store of stores(); track store._id) {
+        <button type="button"
+                (click)="selectStore(store)"
+                [disabled]="!!selecting()"
+                class="flex items-center gap-4 p-4 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-indigo-500 dark:hover:border-indigo-500 hover:shadow-md transition text-left disabled:opacity-60 disabled:cursor-not-allowed">
+          @if (store.logo) {
+            <img [src]="store.logo" [alt]="store.name" class="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
+          } @else {
+            <div class="w-12 h-12 rounded-lg bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center flex-shrink-0 text-xl">
+              🏪
+            </div>
+          }
+
+          <div class="flex-1 min-w-0">
+            <p class="font-medium text-gray-800 dark:text-white truncate">{{ store.name }}</p>
+            @if (store.address) {
+              <p class="text-sm text-gray-500 dark:text-slate-400 truncate">{{ store.address }}</p>
+            }
+          </div>
+
+          @if (selecting() === store._id) {
+            <app-loading-spinner size="sm" />
+          } @else {
+            <svg class="w-5 h-5 text-gray-400 dark:text-slate-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+            </svg>
+          }
+        </button>
+      }
+    </div>
+
+    <div class="text-center mt-8">
+      <button (click)="logout()" class="text-sm font-medium text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 transition-colors">
+        Sign out
+      </button>
+    </div>
+  </div>
+</div>

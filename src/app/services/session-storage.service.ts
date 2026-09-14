@@ -5,6 +5,7 @@ export class SessionStorageService {
   private readonly CURRENT_USER_KEY = 'currentUser';
   private readonly AUTH_TOKEN_KEY = 'auth_token';
   private readonly STORE_KEY = 'store';
+  private readonly STORES_KEY = 'stores';
 
   // --- User ---
   setCurrentUser(user: any): void {
@@ -47,6 +48,21 @@ export class SessionStorageService {
 
   removeStore(): void {
     localStorage.removeItem(this.STORE_KEY);
+  }
+
+  // --- Stores (every store the merchant administers — the switcher's source) ---
+  setStores(stores: any[]): void {
+    localStorage.setItem(this.STORES_KEY, JSON.stringify(stores));
+  }
+
+  getStores<T = any>(): T[] | null {
+    const data = localStorage.getItem(this.STORES_KEY);
+    if (!data || data === 'undefined' || data === 'null') return null;
+    try { return JSON.parse(data); } catch { return null; }
+  }
+
+  removeStores(): void {
+    localStorage.removeItem(this.STORES_KEY);
   }
 
   // --- Generic ---
