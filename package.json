@@ -1,6 +1,6 @@
 {
   "name": "shopbot-printer",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "ShopBot Printer - Enterprise Print Management for ShopBot POS",
   "author": "ShopBot <info@shopbot.africa>",
   "main": "main.js",
@@ -93,6 +93,8 @@
       "main.js",
       "preload.js",
       "electron/**/*",
+      "!electron/**/*.test.js",
+      "!electron/test-fixtures/**",
       "node_modules/**/*",
       "!node_modules/@angular/cli/**",
       "!node_modules/@angular/build/**",
