@@ -13,6 +13,8 @@
  * not a pre-filtered display string — same principle as the POS cart itself.
  */
 
+const { pngToEscPosRaster } = require('./escpos-image');
+
 const ESC = '\x1B';
 const GS = '\x1D';
 
@@ -266,6 +268,48 @@ function composeStationReceipt(job) {
 }
 
 /**
+ * Where the fiscal QR image goes. The composer builds text, but an image is raw
+ * bytes, so the text carries this placeholder and composeReceipt() swaps it for
+ * the raster. A NUL-delimited token can't collide with receipt text.
+ */
+const FISCAL_QR_MARKER = '\u0000FISCAL_QR\u0000';
+
+/** Splits a long reference (an IRN is 64 characters) into lines that fit the paper. */
+function wrapText(text, width) {
+  const lines = [];
+  for (let i = 0; i < text.length; i += width) lines.push(text.slice(i, i + width));
+  return lines;
+}
+
+/**
+ * The tax-authority block: reference (e.g. IRN) and QR image, or "NOT YET FISCALISED"
+ * in the QR's place when the authority has not confirmed the sale (MRA guide 8.1.14).
+ * Returns '' for stores that don't report sales, so ordinary receipts are untouched.
+ */
+function renderFiscalBlock(fiscal, cols) {
+  if (!fiscal || !fiscal.status) return '';
+  let r = drawLine(cols, '-');
+  r += CMD.ALIGN_CENTER;
+  r += CMD.FONT_SMALL_BOLD;
+  r += `${fiscal.authority || ''} e-Invoice\n`.trimStart();
+  r += CMD.FONT_SMALL;
+  if (fiscal.status === 'FISCALISED' && fiscal.reference) {
+    r += `${fiscal.referenceLabel || 'IRN'}:\n`;
+    for (const line of wrapText(String(fiscal.reference), cols)) r += `${line}\n`;
+    r += CMD.FONT_NORMAL;
+    if (fiscal.qrCodePng) r += `${CMD.FEED}${FISCAL_QR_MARKER}\n`;
+  } else {
+    r += CMD.FONT_NORMAL;
+    r += CMD.FEED;
+    r += CMD.BOLD_ON;
+    r += 'NOT YET FISCALISED\n';
+    r += CMD.BOLD_OFF;
+  }
+  r += CMD.ALIGN_LEFT;
+  return r;
+}
+
+/**
  * Master receipt — full store header, all items, financial summary, footer.
  * @param job - PrintJob-shaped object: { items, orderMetadata, receiptSettings, printerDetails }
  */
@@ -486,6 +530,8 @@ function composeMasterReceipt(job) {
     r += CMD.ALIGN_LEFT;
   }
 
+  r += renderFiscalBlock(job.fiscal, cols);
+
   r += drawLine(cols, '=');
   r += CMD.ALIGN_CENTER;
   r += CMD.FEED;
@@ -516,13 +562,22 @@ function composeReceipt(job) {
   const text = job.type === 'station_ticket' || job.type === 'kitchen_ticket' || job.type === 'bar_ticket'
     ? composeStationReceipt(job)
     : composeMasterReceipt(job);
+
   // Matches the encoding the backend generator used before this moved here
   // (`Buffer.from(receiptData)` with no explicit encoding = utf8 default).
-  return Buffer.from(text, 'utf8');
+  if (!text.includes(FISCAL_QR_MARKER)) return Buffer.from(text, 'utf8');
+
+  const [before, after] = text.split(FISCAL_QR_MARKER);
+  const dots = (job.printerDetails?.paperWidth || 80) <= 58 ? 384 : 576;
+  const qr = pngToEscPosRaster(Buffer.from(job.fiscal.qrCodePng, 'base64'), dots);
+  // A QR that can't be drawn must not silently vanish: say so, the IRN above still prints.
+  const qrBytes = qr.length ? qr : Buffer.from('(QR code unavailable)', 'utf8');
+  return Buffer.concat([Buffer.from(before, 'utf8'), qrBytes, Buffer.from(after, 'utf8')]);
 }
 
 module.exports = {
   composeReceipt,
   composeStationReceipt,
   composeMasterReceipt,
+  FISCAL_QR_MARKER,
 };
