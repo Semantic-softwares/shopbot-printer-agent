@@ -291,7 +291,9 @@ function renderFiscalBlock(fiscal, cols) {
   let r = drawLine(cols, '-');
   r += CMD.ALIGN_CENTER;
   r += CMD.FONT_SMALL_BOLD;
-  r += `${fiscal.authority || ''} e-Invoice\n`.trimStart();
+  // A credit note says so; a sale keeps the e-Invoice heading it always had.
+  const heading = fiscal.referenceLabel === 'CRN' ? 'Credit Note' : 'e-Invoice';
+  r += `${fiscal.authority || ''} ${heading}\n`.trimStart();
   r += CMD.FONT_SMALL;
   if (fiscal.status === 'FISCALISED' && fiscal.reference) {
     r += `${fiscal.referenceLabel || 'IRN'}:\n`;
@@ -309,22 +311,9 @@ function renderFiscalBlock(fiscal, cols) {
   return r;
 }
 
-/**
- * Master receipt — full store header, all items, financial summary, footer.
- * @param job - PrintJob-shaped object: { items, orderMetadata, receiptSettings, printerDetails }
- */
-function composeMasterReceipt(job) {
-  const paperWidth = job.printerDetails?.paperWidth || 80;
-  const cols = paperWidth <= 58 ? 32 : 48;
-  const products = job.items || [];
-  const meta = job.orderMetadata || {};
-  const settings = job.receiptSettings || {};
-  const currencyCode = meta.currencyCode || 'NGN';
-
+/** Store name, address and phone, centred. Nothing at all when the store hides its details. */
+function renderStoreHeader(meta, settings) {
   let r = '';
-  r += CMD.INIT;
-  r += CMD.LINE_SPACING_DEFAULT;
-
   r += CMD.ALIGN_CENTER;
   if (settings.showStoreDetails !== false && meta.storeName) {
     const displayName = (settings.useCustomBusinessName && settings.businessName)
@@ -346,6 +335,26 @@ function composeMasterReceipt(job) {
     r += CMD.FONT_NORMAL;
     r += CMD.FEED;
   }
+  return r;
+}
+
+/**
+ * Master receipt — full store header, all items, financial summary, footer.
+ * @param job - PrintJob-shaped object: { items, orderMetadata, receiptSettings, printerDetails }
+ */
+function composeMasterReceipt(job) {
+  const paperWidth = job.printerDetails?.paperWidth || 80;
+  const cols = paperWidth <= 58 ? 32 : 48;
+  const products = job.items || [];
+  const meta = job.orderMetadata || {};
+  const settings = job.receiptSettings || {};
+  const currencyCode = meta.currencyCode || 'NGN';
+
+  let r = '';
+  r += CMD.INIT;
+  r += CMD.LINE_SPACING_DEFAULT;
+
+  r += renderStoreHeader(meta, settings);
 
   r += CMD.FONT_WIDE;
   r += CMD.BOLD_ON;
@@ -554,14 +563,149 @@ function composeMasterReceipt(job) {
 }
 
 /**
- * Compose a job into a Buffer of raw ESC/POS bytes, dispatching by job.type.
- * Station/kitchen/bar tickets get the items-only layout; everything else
- * (master_receipt, or any unrecognized type) gets the full receipt layout.
+ * Refund receipt: what came back, how, and why. Built from `job.refund`; `orderMetadata` supplies the store
+ * header and currency, and `fiscal` (when the store reports sales) is the CREDIT NOTE for this refund.
+ * @param job - PrintJob-shaped object: { refund, orderMetadata, receiptSettings, printerDetails, fiscal }
  */
+function composeRefundReceipt(job) {
+  const paperWidth = job.printerDetails?.paperWidth || 80;
+  const cols = paperWidth <= 58 ? 32 : 48;
+  const refund = job.refund || {};
+  const meta = job.orderMetadata || {};
+  const settings = job.receiptSettings || {};
+  const currencyCode = meta.currencyCode || 'NGN';
+  const lines = Array.isArray(refund.lines) ? refund.lines : [];
+  const tenders = Array.isArray(refund.tenders) ? refund.tenders : [];
+
+  let r = '';
+  r += CMD.INIT;
+  r += CMD.LINE_SPACING_DEFAULT;
+  r += renderStoreHeader(meta, settings);
+
+  r += CMD.ALIGN_CENTER;
+  r += CMD.FONT_WIDE;
+  r += CMD.BOLD_ON;
+  r += 'REFUND\n';
+  r += CMD.BOLD_OFF;
+  r += CMD.FONT_NORMAL;
+  r += CMD.FEED;
+
+  r += CMD.ALIGN_LEFT;
+  r += drawLine(cols, '=');
+  r += CMD.BOLD_ON;
+  r += `Refund #${refund.refundNumber || job._id || ''}\n`;
+  r += CMD.BOLD_OFF;
+  r += `Original sale #${refund.orderReference || meta.reference || job.order}\n`;
+  r += `Date: ${formatDateTime(refund.createdAt || meta.createdAt)}\n`;
+  r += CMD.FONT_SMALL;
+  r += `Printed: ${formatDateTime(new Date())}\n`;
+  r += CMD.FONT_NORMAL;
+  if (settings.showSellerInfo !== false && refund.cashier) r += `Cashier: ${refund.cashier}\n`;
+  if (refund.approvedBy) r += `Approved by: ${refund.approvedBy}\n`;
+  if (refund.reason) {
+    for (const line of wrapText(`Reason: ${refund.reason}`, cols)) r += `${line}\n`;
+  }
+  if (refund.note) {
+    r += CMD.FONT_SMALL;
+    for (const line of wrapText(String(refund.note), cols <= 32 ? 42 : 56)) r += `${line}\n`;
+    r += CMD.FONT_NORMAL;
+  }
+
+  r += drawLine(cols, '=');
+  r += CMD.BOLD_ON;
+  r += padLine('QTY  ITEM', 'REFUND', cols);
+  r += CMD.BOLD_OFF;
+  r += drawLine(cols, '-');
+  r += CMD.LINE_SPACING_TIGHT;
+
+  if (lines.length) {
+    lines.forEach((line, idx) => {
+      const qty = line.quantity || 1;
+      r += CMD.FONT_NORMAL;
+      r += CMD.BOLD_ON;
+      r += padLine(`${qty}x  ${line.name || 'Item'}`, fmtCurrency(line.amount, currencyCode), cols);
+      r += CMD.BOLD_OFF;
+      if (qty > 1 && line.unitPrice > 0) {
+        r += CMD.FONT_SMALL;
+        r += `     @ ${fmtCurrency(line.unitPrice, currencyCode)} each\n`;
+        r += CMD.FONT_NORMAL;
+      }
+      if (idx < lines.length - 1) r += CMD.FEED;
+    });
+  } else {
+    // A goodwill refund of an amount has no items.
+    r += CMD.BOLD_ON;
+    r += padLine('Amount refund', fmtCurrency(refund.total, currencyCode), cols);
+    r += CMD.BOLD_OFF;
+  }
+
+  r += CMD.LINE_SPACING_DEFAULT;
+  r += drawLine(cols, '=');
+  r += CMD.FONT_WIDE;
+  r += CMD.BOLD_ON;
+  r += padLine('REFUND', fmtCurrency(refund.total, currencyCode), Math.floor(cols / 2));
+  r += CMD.BOLD_OFF;
+  r += CMD.FONT_NORMAL;
+  r += drawLine(cols, '-');
+
+  if (tenders.length > 1) {
+    r += padLine('Refunded via', '', cols);
+    tenders.forEach((t) => {
+      r += padLine(`  ${t.method}`, fmtCurrency(t.amount, currencyCode), cols);
+    });
+  } else if (tenders.length === 1) {
+    r += padLine('Refunded via', tenders[0].method, cols);
+  }
+
+  r += renderFiscalBlock(job.fiscal, cols);
+
+  r += drawLine(cols, '=');
+  r += CMD.ALIGN_CENTER;
+  r += CMD.FEED;
+  r += CMD.BOLD_ON;
+  r += `${settings.footerMessage || 'Thank you.'}\n`;
+  r += CMD.BOLD_OFF;
+  if (settings.disclaimer) {
+    r += CMD.FONT_SMALL;
+    r += `${settings.disclaimer}\n`;
+    r += CMD.FONT_NORMAL;
+  }
+  r += CMD.ALIGN_LEFT;
+  r += CMD.FEED;
+  r += CMD.FEED;
+  r += CMD.FEED;
+  r += CMD.PARTIAL_CUT;
+
+  return r;
+}
+
+/**
+ * The receipt text for a job, by job.type. Station/kitchen/bar tickets get the items-only layout, a refund its own
+ * layout, and sales receipts the full one. A type this build does not know FAILS the job rather than printing the
+ * wrong document: a refund job on an older printer build must never come out looking like a sale receipt.
+ */
+function composeText(job) {
+  switch (job.type) {
+    case 'station_ticket':
+    case 'kitchen_ticket':
+    case 'bar_ticket':
+      return composeStationReceipt(job);
+    case 'refund_receipt':
+      return composeRefundReceipt(job);
+    case 'master_receipt':
+    case 'receipt':
+    case 'label':
+    case undefined:
+    case null:
+      return composeMasterReceipt(job);
+    default:
+      throw new Error(`Unsupported print job type: ${job.type}`);
+  }
+}
+
+/** Compose a job into a Buffer of raw ESC/POS bytes, with the fiscal QR (if any) drawn as an image. */
 function composeReceipt(job) {
-  const text = job.type === 'station_ticket' || job.type === 'kitchen_ticket' || job.type === 'bar_ticket'
-    ? composeStationReceipt(job)
-    : composeMasterReceipt(job);
+  const text = composeText(job);
 
   // Matches the encoding the backend generator used before this moved here
   // (`Buffer.from(receiptData)` with no explicit encoding = utf8 default).
@@ -579,5 +723,6 @@ module.exports = {
   composeReceipt,
   composeStationReceipt,
   composeMasterReceipt,
+  composeRefundReceipt,
   FISCAL_QR_MARKER,
 };
