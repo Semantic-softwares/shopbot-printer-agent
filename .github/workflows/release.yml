@@ -19,8 +19,11 @@ on:
 permissions:
   contents: write # Required for creating releases and uploading assets
 
+# The platform jobs only BUILD. electron-builder cannot add files to a release that is already published, so letting each
+# platform publish on its own made the slower one fail ("already_exists") and its installer never uploaded. One final job
+# creates the release once and uploads what every platform built.
 jobs:
-  release:
+  build:
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -46,32 +49,69 @@ jobs:
           (github.event.inputs.platforms == 'windows' && matrix.os == 'windows-2022')
         run: npm ci
 
-      # Both platform jobs publish to the same release. If each one tries to create it, the slower one fails with
-      # "already_exists" and its installer never uploads. Create it here first (the one that loses the race just carries on).
-      - name: Make sure the release exists
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="v$(node -p "require('./package.json').version")"
-          gh release view "$VERSION" >/dev/null 2>&1 || gh release create "$VERSION" --title "$VERSION" --notes "ShopBot Printer $VERSION" || gh release view "$VERSION" >/dev/null
-
-      # macOS: Build and publish
-      - name: Build & Release (macOS)
+      # macOS: Build only
+      - name: Build (macOS)
         if: |
           matrix.os == 'macos-latest' &&
           (github.event_name == 'push' || github.event.inputs.platforms == 'both' || github.event.inputs.platforms == 'macos')
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Skip code signing if no certificate is configured
           CSC_IDENTITY_AUTO_DISCOVERY: false
-        run: npm run release:mac
+        run: npm run build && npx electron-builder --mac --publish never
 
-      # Windows: Build and publish
-      - name: Build & Release (Windows)
+      # Windows: Build only
+      - name: Build (Windows)
         if: |
           matrix.os == 'windows-2022' &&
           (github.event_name == 'push' || github.event.inputs.platforms == 'both' || github.event.inputs.platforms == 'windows')
+        run: npm run build && npx electron-builder --win --publish never
+
+      - name: Collect installers and update files
+        id: collect
+        shell: bash
+        run: |
+          if ls release/latest*.yml >/dev/null 2>&1; then
+            mkdir -p upload
+            cp release/latest*.yml upload/
+            # The update files name the installers with dashes where the build output has spaces; the uploaded names must match.
+            for f in release/*.exe release/*.dmg release/*.zip release/*.blockmap; do
+              [ -f "$f" ] && cp "$f" "upload/$(basename "$f" | tr ' ' '-')"
+            done
+            ls -la upload
+            echo "built=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing was built on this platform."
+          fi
+
+      - name: Keep the build output
+        if: steps.collect.outputs.built == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.os }}
+          path: upload/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: always() && needs.build.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download every platform's build
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Create the release once and upload everything
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run release:win
+        run: |
+          VERSION="v$(node -p "require('./package.json').version")"
+          ls -la assets
+          gh release view "$VERSION" >/dev/null 2>&1 || gh release create "$VERSION" --title "$VERSION" --notes "ShopBot Printer $VERSION"
+          # --clobber: a rebuild of one platform replaces its files and leaves the other platform's alone.
+          gh release upload "$VERSION" assets/* --clobber
+          gh release view "$VERSION" --json assets --jq '.assets[].name'
