@@ -47,17 +47,16 @@ test('a store without e-invoicing gets exactly the receipt it always did', () =>
   assert.ok(!out.toString('utf8').includes('FISCAL'));
 });
 
-test('a fiscalised sale prints the IRN and the QR code before the footer', () => {
+test('a fiscalised sale prints the QR code before the footer and never the IRN', () => {
   const out = composeReceipt(job(fiscalised));
   const text = out.toString('latin1');
   assert.ok(text.includes('MRA e-Invoice'));
-  assert.ok(text.includes('IRN:'));
-  const afterLabel = text.slice(text.indexOf('IRN:') + 4, text.indexOf('\x1d\x76\x30'));
-  assert.equal(afterLabel.replace(/[^AB]/g, ''), IRN, 'the whole IRN prints, wrapped to the paper width');
+  assert.ok(!text.includes('IRN'), 'the invoice reference number is not printed on the customer copy');
+  assert.ok(!text.includes('A'.repeat(32)));
   const rasterAt = out.indexOf(rasterHeader);
-  assert.ok(rasterAt > out.indexOf('IRN:'), 'QR comes after the IRN');
+  assert.ok(rasterAt > out.indexOf('MRA e-Invoice'), 'QR comes after the heading');
   assert.ok(rasterAt < out.indexOf('Thank you'), 'QR comes before the footer');
-  assert.ok(!text.includes('NOT YET FISCALISED'));
+  assert.ok(!text.includes('Not Yet Fiscalized'));
   assert.ok(!text.includes('\u0000FISCAL_QR'));
 });
 
@@ -73,18 +72,18 @@ test('the printed QR is pixel-for-pixel the image MRA issued', () => {
   for (let y = 0; y < rows.length; y++) for (let x = png.width; x < rows[y].length; x++) assert.equal(rows[y][x], false); // padding is paper
 });
 
-test('an unconfirmed sale prints NOT YET FISCALISED in the QR position', () => {
+test('an unconfirmed sale prints Not Yet Fiscalized in the QR position', () => {
   const out = composeReceipt(job({ authority: 'MRA', status: 'NOT_YET_FISCALISED', referenceLabel: 'IRN' }));
   const text = out.toString('latin1');
-  assert.ok(text.includes('NOT YET FISCALISED'));
+  assert.ok(text.includes('Not Yet Fiscalized'));
   assert.equal(out.indexOf(rasterHeader), -1);
-  assert.ok(text.indexOf('NOT YET FISCALISED') < text.indexOf('Thank you'));
+  assert.ok(text.indexOf('Not Yet Fiscalized') < text.indexOf('Thank you'));
 });
 
-test('a QR that cannot be decoded still prints the IRN and says the QR is unavailable', () => {
+test('a QR that cannot be decoded says the QR is unavailable and still hides the IRN', () => {
   const out = composeReceipt(job({ ...fiscalised, qrCodePng: Buffer.from('not a png').toString('base64') }));
   const text = out.toString('latin1');
-  assert.ok(text.includes('IRN:') && text.includes('(QR code unavailable)'));
+  assert.ok(text.includes('(QR code unavailable)') && !text.includes('IRN'));
   assert.equal(out.indexOf(rasterHeader), -1);
 });
 
@@ -183,23 +182,22 @@ test('a refund at a store that does not report sales carries no tax-authority bl
   assert.ok(!textOf(out).includes('FISCAL'));
 });
 
-test('a fiscalised credit note prints its CRN reference and QR, before the footer', () => {
+test('a fiscalised credit note prints its QR, before the footer, and no CRN text', () => {
   const credit = { authority: 'MRA', status: 'FISCALISED', referenceLabel: 'CRN', reference: IRN, qrCodePng: qrPng.toString('base64') };
   const out = composeReceipt(refundJob({ fiscal: credit, receiptSettings: { footerMessage: 'FOOTER-LINE' } }));
   const text = out.toString('latin1');
   assert.ok(text.includes('MRA Credit Note'));
-  assert.ok(text.includes('CRN:'));
-  assert.ok(text.includes('A'.repeat(32)));
+  assert.ok(!text.includes('CRN') && !text.includes('A'.repeat(32)));
   const qrAt = out.indexOf(rasterHeader);
-  assert.ok(qrAt > text.indexOf('CRN:'));
+  assert.ok(qrAt > text.indexOf('MRA Credit Note'));
   assert.ok(qrAt < text.indexOf('FOOTER-LINE'));
   assert.ok(!text.includes('e-Invoice')); // never labelled as a sale invoice
 });
 
-test('an unconfirmed credit note prints NOT YET FISCALISED in the QR position', () => {
+test('an unconfirmed credit note prints Not Yet Fiscalized in the QR position', () => {
   const text = textOf(composeReceipt(refundJob({ fiscal: { authority: 'MRA', status: 'NOT_YET_FISCALISED', referenceLabel: 'CRN' } })));
   assert.ok(text.includes('MRA Credit Note'));
-  assert.ok(text.includes('NOT YET FISCALISED'));
+  assert.ok(text.includes('Not Yet Fiscalized'));
 });
 
 test('58mm paper wraps the refund receipt at 32 columns', () => {

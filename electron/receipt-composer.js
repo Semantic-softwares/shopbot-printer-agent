@@ -296,15 +296,15 @@ function renderFiscalBlock(fiscal, cols) {
   r += `${fiscal.authority || ''} ${heading}\n`.trimStart();
   r += CMD.FONT_SMALL;
   if (fiscal.status === 'FISCALISED' && fiscal.reference) {
-    r += `${fiscal.referenceLabel || 'IRN'}:\n`;
-    for (const line of wrapText(String(fiscal.reference), cols)) r += `${line}\n`;
+    // The customer's copy carries the authority's QR only: the invoice reference number is for staff and the
+    // transaction report, never printed.
     r += CMD.FONT_NORMAL;
     if (fiscal.qrCodePng) r += `${CMD.FEED}${FISCAL_QR_MARKER}\n`;
   } else {
     r += CMD.FONT_NORMAL;
     r += CMD.FEED;
     r += CMD.BOLD_ON;
-    r += 'NOT YET FISCALISED\n';
+    r += 'Not Yet Fiscalized\n';
     r += CMD.BOLD_OFF;
   }
   r += CMD.ALIGN_LEFT;
