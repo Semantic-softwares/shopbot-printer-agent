@@ -445,6 +445,14 @@ function composeMasterReceipt(job) {
 
     r += renderItemOptions(product.options, currencyCode, cols);
 
+    // Tax-free mark (zero-rated or exempt lines only) — only on sales the backend priced per line, and only when the
+    // store shows tax on receipts. Older backends and older sales never send `taxLabel`.
+    if (settings.showTax !== false && product.taxLabel) {
+      r += CMD.FONT_SMALL;
+      r += `     ${product.taxLabel}\n`;
+      r += CMD.FONT_NORMAL;
+    }
+
     if (product.notes) {
       r += CMD.FONT_SMALL;
       r += `     ** ${product.notes}\n`;
@@ -473,7 +481,18 @@ function composeMasterReceipt(job) {
   if (subtotal !== undefined) {
     r += padLine('Subtotal', fmtCurrency(subtotal, currencyCode), cols);
   }
-  if (settings.showTax !== false && tax && tax > 0) {
+  const taxBreakdown = Array.isArray(meta.taxBreakdown) ? meta.taxBreakdown : null;
+  if (settings.showTax !== false && taxBreakdown && taxBreakdown.length) {
+    // Priced per line by the backend: one row per tax rate, then the total, instead of the single legacy "Tax" line.
+    r += padLine('Net taxable', fmtCurrency(meta.taxableAmount || 0, currencyCode), cols);
+    for (const row of taxBreakdown) {
+      const label = row.kind && row.kind !== 'standard' ? row.name : `${row.name} ${row.rate}%`;
+      r += padLine(label, fmtCurrency(row.taxAmount || 0, currencyCode), cols);
+    }
+    if (taxBreakdown.length > 1 || (tax && tax > 0)) {
+      r += padLine('Total VAT', fmtCurrency(tax || 0, currencyCode), cols);
+    }
+  } else if (settings.showTax !== false && tax && tax > 0) {
     r += padLine('Tax', fmtCurrency(tax, currencyCode), cols);
   }
   if (discount && discount > 0) {

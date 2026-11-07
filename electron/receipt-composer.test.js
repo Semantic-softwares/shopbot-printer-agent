@@ -217,3 +217,42 @@ test('sales receipts and tickets are unaffected by the new layout', () => {
   assert.ok(textOf(composeReceipt({ ...job(undefined), type: 'kitchen_ticket', stationName: 'Grill' })).includes('Order'));
   assert.ok(textOf(composeReceipt({ ...job(undefined), type: undefined })).includes('RECEIPT')); // an old job with no type
 });
+
+// ---- per-line tax (tax management) ----
+const taxedJob = (receiptSettings = {}) => ({
+  type: 'master_receipt',
+  printerDetails: { paperWidth: 80 },
+  receiptSettings,
+  items: [
+    { foodId: 'f1', name: 'Burger', quantity: 1, price: 115, options: [] },
+    { foodId: 'f2', name: 'Water', quantity: 1, price: 50, options: [], taxLabel: 'Zero Rated VAT' },
+  ],
+  orderMetadata: {
+    reference: 'R2', subtotal: 165, tax: 15, total: 165, paymentStatus: 'Paid', storeName: 'Shopbot', currencyCode: 'MUR',
+    taxableAmount: 150,
+    taxBreakdown: [
+      { name: 'VAT', kind: 'standard', rate: 15, taxableAmount: 100, taxAmount: 15 },
+      { name: 'Zero Rated VAT', kind: 'zero_rated', rate: 0, taxableAmount: 50, taxAmount: 0 },
+    ],
+  },
+});
+
+test('tax: the rate breakdown prints, and only a tax-free line is marked when the store shows tax', () => {
+  const out = textOf(composeReceipt(taxedJob()));
+  assert.match(out, /Net taxable/);
+  assert.match(out, /VAT 15%/);
+  assert.match(out, /Total VAT/);
+  assert.doesNotMatch(out, /\bTax\b\s+MUR|\bTax {2,}/);
+});
+
+test('tax: showTax off hides every tax mark and row, totals stay', () => {
+  const out = textOf(composeReceipt(taxedJob({ showTax: false })));
+  assert.doesNotMatch(out, /Net taxable|Total VAT|Zero Rated VAT/);
+  assert.match(out, /TOTAL/);
+});
+
+test('tax: a sale with no breakdown keeps the single legacy Tax line', () => {
+  const out = textOf(composeReceipt(job(undefined)));
+  assert.match(out, /Tax/);
+  assert.doesNotMatch(out, /Net taxable|Total VAT/);
+});
