@@ -256,3 +256,15 @@ test('tax: a sale with no breakdown keeps the single legacy Tax line', () => {
   assert.match(out, /Tax/);
   assert.doesNotMatch(out, /Net taxable|Total VAT/);
 });
+
+test('the sequential invoice number is printed, and still never the IRN', () => {
+  const text = textOf(composeReceipt(job({ ...fiscalised, invoiceNumber: 'INV-1234-000007' })));
+  assert.ok(text.includes('Invoice No. INV-1234-000007'));
+  assert.ok(!text.includes(IRN));
+});
+
+test('a credit note prints its CRN number; an unfiscalised one prints the number and Not Yet Fiscalized', () => {
+  const text = textOf(composeReceipt(refundJob({ fiscal: { authority: 'MRA', status: 'NOT_YET_FISCALISED', referenceLabel: 'CRN', invoiceNumber: 'CRN-1234-000002' } })));
+  assert.ok(text.includes('Credit Note No. CRN-1234-000002'));
+  assert.ok(text.includes('Not Yet Fiscalized'));
+});

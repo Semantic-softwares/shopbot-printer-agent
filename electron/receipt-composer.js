@@ -295,6 +295,11 @@ function renderFiscalBlock(fiscal, cols) {
   const heading = fiscal.referenceLabel === 'CRN' ? 'Credit Note' : 'e-Invoice';
   r += `${fiscal.authority || ''} ${heading}\n`.trimStart();
   r += CMD.FONT_SMALL;
+  // The document's own sequential number (INV-… / CRN-…) is printed on the customer's copy; the IRN never is.
+  if (fiscal.invoiceNumber) {
+    r += CMD.FONT_NORMAL;
+    r += `${fiscal.referenceLabel === 'CRN' ? 'Credit Note No.' : 'Invoice No.'} ${fiscal.invoiceNumber}\n`;
+  }
   if (fiscal.status === 'FISCALISED' && fiscal.reference) {
     // The customer's copy carries the authority's QR only: the invoice reference number is for staff and the
     // transaction report, never printed.
