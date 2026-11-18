@@ -268,3 +268,13 @@ test('a credit note prints its CRN number; an unfiscalised one prints the number
   assert.ok(text.includes('Credit Note No. CRN-1234-000002'));
   assert.ok(text.includes('Not Yet Fiscalized'));
 });
+
+test('a refund of a store that reports sales is titled CREDIT NOTE and shows the CRN number; others stay REFUND', () => {
+  const credit = textOf(composeReceipt(refundJob({ refund: { ...refundJob().refund, refundNumber: 'CRN-1234-000002' }, fiscal: { authority: 'MRA', status: 'NOT_YET_FISCALISED', referenceLabel: 'CRN', invoiceNumber: 'CRN-1234-000002' } })));
+  assert.ok(credit.includes('CREDIT NOTE\n'));
+  assert.ok(credit.includes('Credit Note #CRN-1234-000002'));
+  assert.ok(credit.includes('Not Yet Fiscalized'));
+  const plain = textOf(composeReceipt(refundJob()));
+  assert.ok(plain.includes('REFUND\n'));
+  assert.ok(!plain.includes('CREDIT NOTE'));
+});

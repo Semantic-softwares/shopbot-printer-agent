@@ -609,7 +609,9 @@ function composeRefundReceipt(job) {
   r += CMD.ALIGN_CENTER;
   r += CMD.FONT_WIDE;
   r += CMD.BOLD_ON;
-  r += 'REFUND\n';
+  // A store that reports sales issues a CREDIT NOTE (with its own number and QR), so that is what the customer's slip is called.
+  const isCreditNote = !!job.fiscal && job.fiscal.referenceLabel === 'CRN';
+  r += isCreditNote ? 'CREDIT NOTE\n' : 'REFUND\n';
   r += CMD.BOLD_OFF;
   r += CMD.FONT_NORMAL;
   r += CMD.FEED;
@@ -617,7 +619,7 @@ function composeRefundReceipt(job) {
   r += CMD.ALIGN_LEFT;
   r += drawLine(cols, '=');
   r += CMD.BOLD_ON;
-  r += `Refund #${refund.refundNumber || job._id || ''}\n`;
+  r += `${isCreditNote ? 'Credit Note' : 'Refund'} #${refund.refundNumber || job._id || ''}\n`;
   r += CMD.BOLD_OFF;
   r += `Original sale #${refund.orderReference || meta.reference || job.order}\n`;
   r += `Date: ${formatDateTime(refund.createdAt || meta.createdAt)}\n`;
